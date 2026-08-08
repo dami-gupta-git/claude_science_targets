@@ -1,0 +1,47 @@
+[project]
+name = "claude-science-targets"
+version = "0.1.0"
+description = "Custom Claude Science skills: source, helpers and test suites"
+readme = "README.md"
+# Floor set by the declared pins, not by preference: numpy 2.5.1 and scipy
+# 1.18.0 both require >=3.12, pandas 3.0.5 requires >=3.11.
+requires-python = ">=3.12"
+dependencies = [
+    "gemmi>=0.7.5",        # get-protein-structure: structure file parsing
+    "numpy>=2.5.1",
+    "pandas>=3.0.5",
+    "pyarrow>=25.0.0",     # depmap-local: column-addressable parquet cache
+    "pytest>=9.1.1",
+    "rdkit>=2025.3.1",     # boltz-affinity-triage: compound property matching
+    "scikit-learn>=1.9.0", # depmap-genetea: GeneTEA model runtime
+    "scipy>=1.18.0",
+    "statsmodels>=0.14.6", # target-triage-public-data: BH correction
+]
+
+# Extras, not project dependencies: nothing in skills/ imports these directly.
+# `uv sync` alone installs everything the skill test suites need; each extra adds
+# one optional capability.
+#
+#   uv sync                     # all seven suites run; GeneTEA tests skip
+#   uv sync --extra genetea     # + the GeneTEA path (27 further tests)
+#   uv sync --extra results     # + re-running the scripts under results/
+#   uv sync --all-extras        # everything
+#
+# GeneTEA is pinned by commit deliberately: the trained GeneTEA.pkl was written by
+# that build, and unpickling it under another is not guaranteed to work. Its own
+# packaging declares no dependencies, so the five libraries its __init__ imports
+# are listed here -- without them `import GeneTEA` fails even once it installs.
+# The `name @ url` form is standard PEP 508, so pip resolves it as well as uv.
+[project.optional-dependencies]
+genetea = [
+    "GeneTEA @ git+https://github.com/broadinstitute/GeneTEA.git@f47a800ec3ea3c97d59f6074abb073713e3306da",
+    "dill",
+    "matplotlib",  # imported directly by GeneTEA/__init__, not only via seaborn
+    "networkx",
+    "nltk",
+    "seaborn",
+    "plotly",
+]
+results = [
+    "matplotlib",  # results/target_triage/usp1/scripts/usp1_triage.py
+]

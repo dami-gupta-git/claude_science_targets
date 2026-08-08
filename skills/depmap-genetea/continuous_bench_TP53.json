@@ -1,0 +1,78 @@
+{
+  "matrix_shape": [
+    1208,
+    18531
+  ],
+  "parquet_read_s": 0.66,
+  "corrwith_s": 1.05,
+  "vector_len": 18530,
+  "aligned_len": 18507,
+  "constraint_satisfied": true,
+  "raw_ftest_s": 0.044,
+  "tfidf_shape": [
+    18507,
+    24831
+  ],
+  "n_terms_total": 24831,
+  "max_abs_corr": 0.1038,
+  "abs_corr_quantiles": {
+    "0.5": 0.005,
+    "0.9": 0.0131,
+    "0.99": 0.0313,
+    "0.999": 0.0635
+  },
+  "n_fdr_sig": 467,
+  "n_by_corr_thresh": {
+    "0.2": 0,
+    "0.15": 0,
+    "0.1": 1,
+    "0.05": 72,
+    "0.03": 281
+  },
+  "genetea_default_0.2": {
+    "corr_thresh": 0.2,
+    "correlated_terms_s": 0.2,
+    "correlated_term_rows": 0,
+    "graph_filter_s": 0.0,
+    "enriched_rows": 0,
+    "term_groups": 0
+  },
+  "calibrated": {
+    "corr_thresh": 0.03,
+    "correlated_terms_s": 0.26,
+    "correlated_term_rows": 281,
+    "graph_filter_s": 0.07,
+    "enriched_rows": 74,
+    "term_groups": 10
+  },
+  "top_terms_effect_size": [
+    "~ mitochondrial",
+    "~ 60s",
+    "~ ribosomal",
+    "~ nucleolus",
+    "~ olfactory receptor",
+    "39s",
+    "~ nBAF",
+    "processome",
+    "~ fanconi",
+    "~ mRNA"
+  ],
+  "top_terms_significance": [
+    "~ 60s",
+    "~ dispersed",
+    "~ nBAF",
+    "group v",
+    "variable charge x linked",
+    "sex ratio",
+    "~ nucleolus",
+    "~ VCX",
+    "variably",
+    "~ urinary tract anomalies"
+  ],
+  "permutation": {
+    "n_timed": 10,
+    "per_permutation_s": 0.014,
+    "extrapolated_10k_min": 2.3
+  },
+  "peak_rss_gb": 1.96
+}

@@ -1,0 +1,7 @@
+query,list_size,n_terms_corpus_background,n_terms_screened_background,n_shared,n_dropped_when_corrected,n_gained_when_corrected,n_rank_changed,max_rank_move,top1_corpus,top1_screened,top1_changed,dropped_terms,gained_terms
+SMARCA4,50,124,94,89,35,5,88,30,~ SMARCA4,~ SMARCA4,False,~ mitochondrial | ~ DNA | ~ homolog | ~ WW | ~ dependent | ~ YAP1,~ ATP | ~ EEF2 | ~ exit | ~ transcriptional activation | ~ coffin siris syndrome
+RAD21,50,14,3,3,11,0,2,7,~ cohesin,~ cohesin,False,~ prophase | ~ SMC3 | ~ dependent | ~ sister | ~ general transcription factor | anaphase,
+MRPL11,50,59,49,48,11,1,14,10,~ mitochondrial,~ mitochondrial,False,~ RNA binding | ~ chromosome | ~ GAT | ~ TRMT10C | ~ HSD17B10 | POLRMT,~ l18a
+BMS1,50,66,52,44,22,8,39,12,~ nucleolus,~ nucleolus,False,~ RNA binding | RNA polymerase i | ~ RNA exosome | ~ transcription | ~ RPP25 | RNA folding,~ RNA | ~ eukaryotic | ~ particle | conserved | ~ fibrillar | ~ center
+VPS4A,50,86,43,33,53,10,32,40,~ kinase,~ kinase,False,~ DNA | ~ transcription | ~ III | ~ endosome | ~ ubiquitin | ~ cancer,~ cycle | ~ stabilization | ~ cytokinesis | ~ SH3 domain | vacuolar protein sorting | ~ budding
+SOX10,50,78,35,25,53,10,25,41,~ transcription,~ DNA,True,~ transcription | ~ kinase | ~ phosphatase | ~ proteasome | ~ waardenburg | ~ box,~ transcription factor | ~ cardiofaciocutaneous | consensus | ~ hippel | ~ CREB regulated transcription coactivator 1 | ~ cAMP response element binding protein binding

@@ -1,0 +1,4 @@
+metric,real_min,real_median,control_value,null_median,null_p10,null_p90
+profile_sd,0.2075,0.3525,0.1277,0.1382,0.1086,0.2587
+min_effect,-3.7134,-2.7359,-0.6093,-0.6854,-1.8512,-0.4237
+n_dep_lines,50.0,311.0,10.0,5.5,0.0,508.4
