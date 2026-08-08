@@ -11,13 +11,15 @@ DEPMAP_ESSENTIAL_THRESHOLD = -1.0
 
 # Working columns sensitivity_scan writes into its own copy of the caller's
 # frame. Named here so the collision guard and the confound label cannot drift
-# apart from the strings actually used.
-_PANEL_MEAN_COL = "_panel_mean"
-_PANEL_MEAN_LOO_COL = "_panel_mean_loo"
+# apart from the strings actually used. The identifiers carry no leading
+# underscore because the kernel.py sidecar loader reserves that prefix; the
+# column-name VALUES keep theirs, since callers' frames are checked against them.
+PANEL_MEAN_COL = "_panel_mean"
+PANEL_MEAN_LOO_COL = "_panel_mean_loo"
 
 # Declared so an all-dropped scan returns an empty frame with the real columns
 # rather than a column-less one, on which res.r_partial raises AttributeError.
-_SCAN_COLUMNS = ("drug", "n", "r", "p", "r_partial", "p_partial", "confound")
+SCAN_COLUMNS = ("drug", "n", "r", "p", "r_partial", "p_partial", "confound")
 OT_GRAPHQL = "https://api.platform.opentargets.org/api/v4/graphql"
 GDSC_RELEASE_BASE = "https://ftp.sanger.ac.uk/pub/project/cancerrxgene/releases/release-8.4/"
 CBIO_API = "https://www.cbioportal.org/api"
@@ -203,13 +205,13 @@ def sensitivity_scan(df, expr_col, drug_cols, panel_mean_col=None, min_n=15,
                 "confound from the data (a single drug's panel mean is itself); "
                 "pass panel_mean_col= computed from a wider drug panel, or use "
                 "confounder_check for a single-drug check.")
-        for reserved in (_PANEL_MEAN_COL, _PANEL_MEAN_LOO_COL):
+        for reserved in (PANEL_MEAN_COL, PANEL_MEAN_LOO_COL):
             if reserved in d.columns:
                 raise ValueError(
                     f"{reserved!r} is reserved by sensitivity_scan for the panel-mean "
                     "confound and would overwrite the supplied column; rename it, or pass "
                     "panel_mean_col to use a fixed confound.")
-        panel_mean_col = _PANEL_MEAN_COL
+        panel_mean_col = PANEL_MEAN_COL
         d[panel_mean_col] = d[drug_cols].mean(axis=1)
     elif panel_mean_col not in d.columns:
         raise KeyError(
@@ -224,7 +226,7 @@ def sensitivity_scan(df, expr_col, drug_cols, panel_mean_col=None, min_n=15,
         if supplied_panel or not leave_one_out or len(drug_cols) < 2:
             conf_col = panel_mean_col
         else:
-            conf_col = _PANEL_MEAN_LOO_COL
+            conf_col = PANEL_MEAN_LOO_COL
             d[conf_col] = d[[c for c in drug_cols if c != drug]].mean(axis=1)
         s = d[[drug, expr_col, conf_col]].dropna()
         if len(s) < min_n:
@@ -239,12 +241,12 @@ def sensitivity_scan(df, expr_col, drug_cols, panel_mean_col=None, min_n=15,
         r, p = stats.pearsonr(s[expr_col], s[drug])
         rp, pp = partial_corr(s[expr_col].values, s[drug].values, s[conf_col].values)
         out.append(dict(drug=drug, n=len(s), r=r, p=p, r_partial=rp, p_partial=pp,
-                        confound="leave-one-out" if conf_col == _PANEL_MEAN_LOO_COL
+                        confound="leave-one-out" if conf_col == PANEL_MEAN_LOO_COL
                                  else "whole-panel"))
     if dropped:
         print(f"[sensitivity_scan] {len(dropped)} of {len(drug_cols)} drugs not tested: "
               + ", ".join(f"{r['drug']} (n={r['n']}, {r['reason']})" for r in dropped))
-    res = pd.DataFrame(out, columns=_SCAN_COLUMNS)
+    res = pd.DataFrame(out, columns=SCAN_COLUMNS)
     res.attrs["dropped"] = dropped
     if not len(res):
         return res
@@ -277,18 +279,18 @@ def confounder_check(df, expr_col, drug_cols):
     missing = [c for c in drug_cols + [expr_col] if c not in d.columns]
     if missing:
         raise KeyError(f"columns absent from df: {missing}")
-    if _PANEL_MEAN_COL in d.columns:
+    if PANEL_MEAN_COL in d.columns:
         raise ValueError(
-            f"{_PANEL_MEAN_COL!r} is reserved by confounder_check for the panel mean "
+            f"{PANEL_MEAN_COL!r} is reserved by confounder_check for the panel mean "
             "and would overwrite the supplied column; rename it.")
-    d[_PANEL_MEAN_COL] = d[drug_cols].mean(axis=1)
+    d[PANEL_MEAN_COL] = d[drug_cols].mean(axis=1)
     d["_n_drugs"] = d[drug_cols].notna().sum(axis=1)
-    s = d[[expr_col, _PANEL_MEAN_COL, "_n_drugs"]].dropna(subset=[expr_col, _PANEL_MEAN_COL])
+    s = d[[expr_col, PANEL_MEAN_COL, "_n_drugs"]].dropna(subset=[expr_col, PANEL_MEAN_COL])
     if len(s) < 3:
         raise ValueError(
             f"confounder_check needs at least 3 complete rows; got {len(s)} "
             f"from {len(d)} rows of {len(drug_cols)} drug columns")
-    r, p = stats.pearsonr(s[expr_col], s[_PANEL_MEAN_COL])
+    r, p = stats.pearsonr(s[expr_col], s[PANEL_MEAN_COL])
     return {"r": float(r), "p": float(p), "n": int(len(s)),
             "n_drugs": len(drug_cols), "n_drugs_min": int(s["_n_drugs"].min())}
 
