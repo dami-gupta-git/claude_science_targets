@@ -29,10 +29,15 @@ Module constants: `VERDICTS`, `EVIDENCE_FLOOR`, `SUPPRESSOR_MIN_FRAC_POS`,
 
 ### Saving a run
 
-- `fusion_run_dir(subject, root="results", topic="depmap_fusion")` — the path for
+- `results_root(root=None)` — resolves this repo's `results/` directory from
+  `$SCIENCE_RESULTS_ROOT` or an explicit `root=`; raises naming the variable
+  when neither is set, rather than silently creating a `results/` folder
+  wherever the kernel session's cwd happens to be.
+- `fusion_run_dir(subject, root=None, topic="depmap_fusion")` — the path for
   one run, `<root>/<topic>/<slug>/`, with `scripts/` created beside it.
   `subject` is a gene symbol for a single-target dossier or a disease name for
-  a triage table; it is slugged to snake_case.
+  a triage table; it is slugged to snake_case. `root` resolves via
+  `results_root()`.
 - `fusion_write_run(out_dir, subject, rows, summary, disease=None, files=(),
   data_sources=(), limits=(), scripts=())` — writes `fusion_verdicts.csv` (one
   row per `fuse_target_row()` result), the run `README.md`, and copies

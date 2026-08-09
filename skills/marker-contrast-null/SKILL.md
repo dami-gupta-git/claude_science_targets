@@ -87,7 +87,10 @@ over a scan the marker is absent from would be meaningless.
 
 A standalone check (not run as part of another skill's triage) writes its
 scan, its specificity table if run, and a README stating plainly whether the
-marker survives the controls, via `mcn_write_run` — not assembled by hand:
+marker survives the controls, via `mcn_write_run` — not assembled by hand.
+`mcn_run_dir` needs `$SCIENCE_RESULTS_ROOT` set to this repo's `results/`
+directory, or an explicit `root=` — it raises naming the variable rather than
+silently creating a `results/` folder wherever the session's cwd happens to be:
 
 ```python
 out_dir = mcn_run_dir("USP1 in BRCA1-mutant lines")

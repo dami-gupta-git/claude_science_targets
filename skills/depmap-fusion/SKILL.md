@@ -29,7 +29,10 @@ Load both; this skill only adds the join and the verdict.
 5. **Save the run** - `fusion_write_run(out_dir, subject, rows, summary, ...)`
    into `results/depmap_fusion/<subject>/`, not assembled by hand. A single row
    renders as a target dossier; several render as a triage table with the
-   verdict mix. `out_dir` comes from `fusion_run_dir(subject)`:
+   verdict mix. `out_dir` comes from `fusion_run_dir(subject)`, which needs
+   `$SCIENCE_RESULTS_ROOT` set to this repo's `results/` directory (or an
+   explicit `root=`) - it raises naming the variable rather than silently
+   creating a `results/` folder wherever the session's cwd happens to be:
 
 ```python
 rows = [fuse_target_row("EGFR", ot_score, effect_stats, lineage_row, modalities), ...]

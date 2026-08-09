@@ -8,7 +8,27 @@ import os
 import pandas as pd
 import pytest
 
-from kernel import mcn_run_dir, mcn_run_readme, mcn_verdict, mcn_write_run
+from kernel import mcn_run_dir, mcn_run_readme, mcn_verdict, mcn_write_run, results_root
+
+
+def test_results_root_raises_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("SCIENCE_RESULTS_ROOT", raising=False)
+    with pytest.raises(FileNotFoundError, match="SCIENCE_RESULTS_ROOT"):
+        results_root()
+
+
+def test_run_dir_raises_and_creates_nothing_when_root_unconfigured(monkeypatch, tmp_path):
+    monkeypatch.delenv("SCIENCE_RESULTS_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        mcn_run_dir("USP1 in BRCA1-mutant lines")
+    assert not (tmp_path / "results").exists()
+
+
+def test_run_dir_honours_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("SCIENCE_RESULTS_ROOT", str(tmp_path))
+    out_dir = mcn_run_dir("USP1 in BRCA1-mutant lines")
+    assert out_dir == str(tmp_path / "marker_contrast_null" / "usp1_in_brca1_mutant_lines")
 
 
 def contrast(n_focal=24, n_reference=1184, mean_focal=-0.424,

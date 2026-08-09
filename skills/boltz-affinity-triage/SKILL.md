@@ -209,6 +209,9 @@ A triage is not finished when the numbers are in the kernel. Every run writes a
 directory under `results/boltz_affinity_triage/<target>/`, a sibling of any
 other target run, so two triages stay comparable and the co-folding output —
 which is expensive and needs a GPU to reproduce — survives the session.
+`kba_run_dir` needs `$SCIENCE_RESULTS_ROOT` set to this repo's `results/`
+directory, or an explicit `root=` — it raises naming the variable rather than
+silently creating a `results/` folder wherever the session's cwd happens to be.
 
 ```python
 # python

@@ -47,9 +47,18 @@ Module constants: `TIER_RUBRIC`, `EVIDENCE_GRADES`, `CLAIM_STEPS`, `AI_TERMS`,
 
 ### Saving a run
 
-- `audit_run_dir(name, root="results", topic="ai_origination_audit")` — the
+- `results_root(root=None)` — resolves this repo's `results/` directory from
+  `$SCIENCE_RESULTS_ROOT` or an explicit `root=`; raises naming the variable
+  when neither is set, rather than silently creating a `results/` folder
+  wherever the kernel session's cwd happens to be.
+- `audit_run_dir(name, root=None, topic="ai_origination_audit")` — the
   path for one run, `<root>/<topic>/<slug>/`, with `scripts/` created beside
-  it. `name` is the candidate or company audited.
+  it. `name` is the candidate or company audited. `root` resolves via
+  `results_root()`.
+- No test suite shipped with this skill previously; `tests/test_run_output.py`
+  now covers the results-writer (run from the skill directory with
+  `python -m pytest`, no network needed — the ClinicalTrials.gov helpers
+  themselves remain untested, since they need live network access).
 - `audit_write_run(out_dir, name, summary, candidate=None, evidence_rows=(),
   trial_rows=(), files=(), data_sources=(), limits=(), scripts=())` — writes
   the three schema-locked tables (`candidate.csv`, `trials.csv`,

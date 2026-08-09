@@ -774,6 +774,23 @@ class TestRunDir:
         with pytest.raises(ValueError):
             k.kba_run_dir("   ", root=str(tmp_path))
 
+    def test_results_root_raises_when_unconfigured(self, monkeypatch):
+        monkeypatch.delenv("SCIENCE_RESULTS_ROOT", raising=False)
+        with pytest.raises(FileNotFoundError, match="SCIENCE_RESULTS_ROOT"):
+            k.results_root()
+
+    def test_raises_and_creates_nothing_when_root_unconfigured(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("SCIENCE_RESULTS_ROOT", raising=False)
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(FileNotFoundError):
+            k.kba_run_dir("EGFR")
+        assert not (tmp_path / "results").exists()
+
+    def test_honours_env_var(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("SCIENCE_RESULTS_ROOT", str(tmp_path))
+        out = k.kba_run_dir("EGFR")
+        assert out == str(tmp_path / "boltz_affinity_triage" / "egfr")
+
 
 class TestWriteTable:
     def test_empty_rows_write_nothing(self, tmp_path):

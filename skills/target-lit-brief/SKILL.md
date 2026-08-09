@@ -43,9 +43,12 @@ ordering cannot be trusted — see the recency section below.
    symbol, rows, synthesis_text, stats, gene_name, query)` — not
    `write_paper_table`/`write_brief` called by hand with a hand-built path.
    Lands in `results/target_lit_brief/<symbol>/` as `<symbol>_recent_papers.csv`
-   and `README.md`, matching the existing runs. `brief_write_run` passes
-   `rows=` through to `write_brief` internally, which is what converts inline
-   PMIDs to numbered references — see below.
+   and `README.md`, matching the existing runs. `brief_run_dir` needs
+   `$SCIENCE_RESULTS_ROOT` set to this repo's `results/` directory (or an
+   explicit `root=`) — it raises naming the variable rather than silently
+   creating a `results/` folder wherever the session's cwd happens to be.
+   `brief_write_run` passes `rows=` through to `write_brief` internally,
+   which is what converts inline PMIDs to numbered references — see below.
 
 Steps 4 and 5 both cost one LLM call per paper, so the count drives the cost of
 a run. Retrieval does not: search and metadata are flat in the pool size.

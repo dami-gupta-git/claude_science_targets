@@ -331,17 +331,42 @@ STANDING_LIMITS = (
 )
 
 
-def audit_run_dir(name, root="results", topic=None, make=True):
+def results_root(root=None):
+    """Resolve this repo's results/ directory. Requires $SCIENCE_RESULTS_ROOT or root=.
+
+    No cwd-relative default (a bare "results" silently resolves against
+    whatever directory the kernel session happens to be running in, which is
+    not reliably this repo's checkout) and no isdir check (unlike
+    depmap-local's depmap_root(), a results root is written to, not read
+    from, so it may not exist yet on a first run — the topic/run makedirs
+    call creates it).
+    """
+    if root is None:
+        root = os.environ.get("SCIENCE_RESULTS_ROOT")
+    if root is None:
+        raise FileNotFoundError(
+            "No results root configured. Set $SCIENCE_RESULTS_ROOT to this "
+            "repo's results/ directory, or pass root= explicitly.")
+    return root
+
+
+def audit_run_dir(name, root=None, topic=None, make=True):
     """Path for one audit run: <root>/<topic>/<slug>/, with scripts/ beside it.
 
     `name` is the candidate or company audited; slugged to snake_case because
     result directories are named that way and a free-text name may carry
     spaces, hyphens or case.
 
+    `root` resolves via `results_root()` — $SCIENCE_RESULTS_ROOT or an
+    explicit `root=` — before anything is created, so a misconfigured or
+    unset root raises here rather than silently creating a `results/`
+    directory wherever the session's cwd happens to be.
+
     `topic` defaults to RESULTS_TOPIC through an explicit None check rather
     than in the signature: the kernel.py sidecar loader rejects a non-literal
     default, and a rejected file defines none of this module's helpers.
     """
+    root = results_root(root)
     topic = RESULTS_TOPIC if topic is None else topic
     slug = re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
     if not slug:
@@ -457,12 +482,12 @@ def audit_run_readme(name, summary, candidate=None, evidence_rows=(),
             parts.append(f"- `{r.get('trial_id')}`: {r['discrepancy_flags']}")
         parts += [""]
 
-    if trial_needs or evidence_needs:
+    if trial_needs:
         parts += ["### Human-check queue", "",
-                 f"{len(trial_needs)} trial row(s) and {len(evidence_needs)} "
-                 "evidence row(s) are marked `needs_verification` and were "
-                 "not queried against a machine-readable source; excluded "
-                 "from headline counts above.", ""]
+                 f"{len(trial_needs)} trial row(s) are marked "
+                 "`needs_verification` and were not queried against a "
+                 "machine-readable source; excluded from headline counts "
+                 "above.", ""]
 
     parts += ["## Files", ""]
     for entry in files:

@@ -49,10 +49,15 @@ Module constants: `MARKER_MIN_N`, `MARKER_MAX_N`, `MIN_ARM_N`.
 
 ### Saving a run
 
-- `mcn_run_dir(name, root="results", topic="marker_contrast_null")` — the path
+- `results_root(root=None)` — resolves this repo's `results/` directory from
+  `$SCIENCE_RESULTS_ROOT` or an explicit `root=`; raises naming the variable
+  when neither is set, rather than silently creating a `results/` folder
+  wherever the kernel session's cwd happens to be.
+- `mcn_run_dir(name, root=None, topic="marker_contrast_null")` — the path
   for one standalone run, `<root>/<topic>/<slug>/`, with `scripts/` created
   beside it. `name` identifies the contrast tested, not just the marker, since
-  one marker can be scanned against several measurements.
+  one marker can be scanned against several measurements. `root` resolves via
+  `results_root()`.
 - `mcn_write_run(out_dir, name, contrast, rank, scan=None, global_shift=None,
   specificity=None, neighbourhood=None, summary=None, files=(),
   data_sources=(), limits=(), scripts=())` — writes `null_scan.csv`,

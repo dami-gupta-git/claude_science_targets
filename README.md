@@ -147,7 +147,19 @@ Figshare
 Same behaviour: `genetea_load()` raises naming `$GENETEA_MODEL` when neither it
 nor `path=` is supplied.
 
-### 4. Attach connectors
+### 4. Point every skill's results-writer at this repo
+
+Seven skills (`target-lit-brief`, `boltz-affinity-triage`, `depmap-fusion`,
+`depmap-genetea`, `get-protein-structure`, `marker-contrast-null`,
+`ai-origination-audit`) save a full run — tables plus a README — into this
+repo's `results/<topic>/<run>/` via a `*_run_dir()` helper. Set
+`$SCIENCE_RESULTS_ROOT` to this checkout's `results/` directory (see
+`env.example`), or pass `root=` explicitly on each call. No cwd-relative
+default: each raises `FileNotFoundError` naming the variable when neither is
+set, rather than silently creating a new `results/` folder wherever the
+kernel session's working directory happens to be.
+
+### 5. Attach connectors
 
 Settings → Connectors, for whichever skills you intend to use:
 

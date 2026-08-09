@@ -398,14 +398,38 @@ QUERY_COLUMNS = ("compound_id", "smiles", "binder_score", "score_key",
                  "nearest_active", "nearest_tanimoto", "flags")
 
 
-def kba_run_dir(target, root="results", topic=None, make=True):
+def results_root(root=None):
+    """Resolve this repo's results/ directory. Requires $SCIENCE_RESULTS_ROOT or root=.
+
+    No cwd-relative default (a bare "results" silently resolves against
+    whatever directory the kernel session happens to be running in, which is
+    not reliably this repo's checkout) and no isdir check (unlike
+    depmap_root(), a results root is written to, not read from, so it may not
+    exist yet on a first run — the topic/run makedirs call creates it).
+    """
+    if root is None:
+        root = os.environ.get("SCIENCE_RESULTS_ROOT")
+    if root is None:
+        raise FileNotFoundError(
+            "No results root configured. Set $SCIENCE_RESULTS_ROOT to this "
+            "repo's results/ directory, or pass root= explicitly.")
+    return root
+
+
+def kba_run_dir(target, root=None, topic=None, make=True):
     """Path for one triage run: <root>/<topic>/<target>/, with scripts/ beside it.
 
     Runs are siblings under one topic so that two targets stay comparable and
     the topic directory does not accumulate loose files. `target` is slugged to
     snake_case because result directories are named that way and a raw gene or
     ChEMBL label may carry spaces, hyphens or case.
+
+    `root` resolves via `results_root()` — $SCIENCE_RESULTS_ROOT or an
+    explicit `root=` — before anything is created, so a misconfigured or
+    unset root raises here rather than silently creating a `results/`
+    directory wherever the session's cwd happens to be.
     """
+    root = results_root(root)
     topic = RESULTS_TOPIC if topic is None else topic
     slug = re.sub(r"[^a-z0-9]+", "_", str(target).strip().lower()).strip("_")
     if not slug:

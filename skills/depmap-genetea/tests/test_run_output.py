@@ -12,6 +12,26 @@ import pytest
 import kernel as ge
 
 
+def test_results_root_raises_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("SCIENCE_RESULTS_ROOT", raising=False)
+    with pytest.raises(FileNotFoundError, match="SCIENCE_RESULTS_ROOT"):
+        ge.genetea_results_root()
+
+
+def test_run_dir_raises_and_creates_nothing_when_root_unconfigured(monkeypatch, tmp_path):
+    monkeypatch.delenv("SCIENCE_RESULTS_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        ge.genetea_run_dir("TP53")
+    assert not (tmp_path / "results").exists()
+
+
+def test_run_dir_honours_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("SCIENCE_RESULTS_ROOT", str(tmp_path))
+    out_dir = ge.genetea_run_dir("TP53")
+    assert out_dir == str(tmp_path / "depmap_genetea" / "tp53")
+
+
 def codependencies():
     return pd.DataFrame([
         {"gene": "MDM2", "r": -0.718, "n_lines": 1180, "z": -6.2, "rank": 1,
@@ -38,24 +58,24 @@ def provenance():
 
 
 def test_run_dir_slugs_name_and_makes_scripts(tmp_path):
-    out_dir = ge.genetea_run_dir("TP53", root=str(tmp_path))
+    out_dir = ge.genetea_run_dir("TP53", results_root=str(tmp_path))
     assert out_dir == str(tmp_path / "depmap_genetea" / "tp53")
     assert os.path.isdir(os.path.join(out_dir, "scripts"))
 
 
 def test_run_dir_rejects_empty_name(tmp_path):
     with pytest.raises(ValueError):
-        ge.genetea_run_dir("   ", root=str(tmp_path))
+        ge.genetea_run_dir("   ", results_root=str(tmp_path))
 
 
 def test_write_run_needs_at_least_one_table(tmp_path):
-    out_dir = ge.genetea_run_dir("EMPTY", root=str(tmp_path))
+    out_dir = ge.genetea_run_dir("EMPTY", results_root=str(tmp_path))
     with pytest.raises(ValueError):
         ge.genetea_write_run(out_dir, "EMPTY", summary="nothing to report")
 
 
 def test_write_run_codependencies_only(tmp_path):
-    out_dir = ge.genetea_run_dir("TP53", root=str(tmp_path))
+    out_dir = ge.genetea_run_dir("TP53", results_root=str(tmp_path))
     written = ge.genetea_write_run(
         out_dir, "TP53", gene="TP53",
         summary="TP53's strongest codependencies are MDM2 and MDM4, its "
@@ -70,7 +90,7 @@ def test_write_run_codependencies_only(tmp_path):
 
 
 def test_write_run_terms_and_provenance(tmp_path):
-    out_dir = ge.genetea_run_dir("TP53 partners", root=str(tmp_path))
+    out_dir = ge.genetea_run_dir("TP53 partners", results_root=str(tmp_path))
     written = ge.genetea_write_run(
         out_dir, "TP53 partners", gene="TP53",
         summary="The MDM2/MDM4 codependency partners are named by GeneTEA as "
@@ -86,7 +106,7 @@ def test_write_run_terms_and_provenance(tmp_path):
 
 def test_write_run_provenance_as_list_of_dicts(tmp_path):
     """provenance passed as a plain list (not a DataFrame) must not crash."""
-    out_dir = ge.genetea_run_dir("TP53 list provenance", root=str(tmp_path))
+    out_dir = ge.genetea_run_dir("TP53 list provenance", results_root=str(tmp_path))
     written = ge.genetea_write_run(
         out_dir, "TP53 list provenance", gene="TP53",
         summary="Terms named for the MDM2/MDM4 codependency partners.",
@@ -97,7 +117,7 @@ def test_write_run_provenance_as_list_of_dicts(tmp_path):
 
 
 def test_write_run_continuous_term_kind_uses_correlation_columns(tmp_path):
-    out_dir = ge.genetea_run_dir("TP53 continuous", root=str(tmp_path))
+    out_dir = ge.genetea_run_dir("TP53 continuous", results_root=str(tmp_path))
     cont = pd.DataFrame([
         {"Term": "~ MDM2", "Synonyms": "", "Correlation": -0.62, "p-val": 1e-10,
          "FDR": 1e-8, "Effect Size": 3.1, "Directed Effect Size": -3.1,

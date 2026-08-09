@@ -90,9 +90,17 @@ that prefix. They are implementation detail; call the functions above instead.
 
 ### Saving a run
 
-- `genetea_run_dir(name, root="results", topic="depmap_genetea")` — the path
-  for one run, `<root>/<topic>/<slug>/`, with `scripts/` created beside it.
-  `name` is the query gene or a short label for a gene set.
+- `genetea_results_root(results_root=None)` — resolves this repo's `results/`
+  directory from `$SCIENCE_RESULTS_ROOT` or an explicit `results_root=`;
+  raises naming the variable when neither is set, rather than silently
+  creating a `results/` folder wherever the kernel session's cwd happens to
+  be. Named distinctly from every other `root` in this file, which means
+  the DepMap data directory — reusing that name here would make it easy to
+  copy-paste a DepMap-root variable into the wrong call and silently write a
+  run into the DepMap release directory instead.
+- `genetea_run_dir(name, results_root=None, topic="depmap_genetea")` — the
+  path for one run, `<results_root>/<topic>/<slug>/`, with `scripts/` created
+  beside it. `name` is the query gene or a short label for a gene set.
 - `genetea_write_run(out_dir, name, summary, gene=None, codependencies=None,
   terms=None, term_kind="discrete", provenance=None, files=(),
   data_sources=(), limits=(), scripts=(), top_n=10)` — writes

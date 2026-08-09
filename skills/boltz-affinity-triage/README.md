@@ -102,9 +102,14 @@ Scoring and gating:
 
 Run outputs:
 
-- `kba_run_dir(target, root='results', topic=None, make=True)` — the run
+- `results_root(root=None)` — resolves this repo's `results/` directory from
+  `$SCIENCE_RESULTS_ROOT` or an explicit `root=`; raises naming the variable
+  when neither is set, rather than silently creating a `results/` folder
+  wherever the kernel session's cwd happens to be.
+- `kba_run_dir(target, root=None, topic=None, make=True)` — the run
   directory for one target, slugged to snake_case under the
-  `boltz_affinity_triage` topic, with `scripts/` created beside it.
+  `boltz_affinity_triage` topic, with `scripts/` created beside it. `root`
+  resolves via `results_root()`.
 - `kba_write_table(path, rows, headers=None)` — CSV writer that keeps keys not
   named in `headers` rather than dropping them; returns `None` for empty input.
 - `kba_markdown_table(rows, headers=None)` — the same rows rendered for the

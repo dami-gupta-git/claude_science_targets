@@ -41,15 +41,22 @@ which residues the entry does not observe.
 
 ### Saving a run
 
-- `get_structure_to_results(query, name=None, root="results",
+- `results_root(root=None)` — resolves this repo's `results/` directory from
+  `$SCIENCE_RESULTS_ROOT` or an explicit `root=`; raises naming the variable
+  when neither is set, rather than silently creating a `results/` folder
+  wherever the kernel session's cwd happens to be. Separate from
+  `out_dir="structures"`, the default on `fetch_pdb`/`fetch_alphafold`/
+  `prep_structure` for standalone use outside a saved run.
+- `get_structure_to_results(query, name=None, root=None,
   topic="protein_structure", summary=None, with_site=False, ...)` —
   `get_structure()` (or `get_structure_with_site()` with `with_site=True`),
   routed into `results/protein_structure/<slug>/` instead of the bare
   `structures/` default `get_structure` otherwise writes to, then saved as a
   full run via `gps_write_run`. Returns the usual result dict with a `run`
   key added.
-- `gps_run_dir(target, root="results", topic="protein_structure")` — the path
+- `gps_run_dir(target, root=None, topic="protein_structure")` — the path
   for one run, `<root>/<topic>/<slug>/`, with `scripts/` created beside it.
+  `root` resolves via `results_root()`.
 - `gps_write_run(out_dir, name, result, summary=None, files=(),
   data_sources=(), limits=(), scripts=())` — copies the structure file(s)
   already on disk at `result["path"]`/`result["raw_path"]` into `out_dir`,

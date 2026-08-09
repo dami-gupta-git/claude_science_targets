@@ -1230,17 +1230,49 @@ STANDING_LIMITS = (
 )
 
 
-def genetea_run_dir(name, root="results", topic=None, make=True):
+def genetea_results_root(results_root=None):
+    """Resolve this repo's results/ directory. Requires $SCIENCE_RESULTS_ROOT or results_root=.
+
+    Named distinctly from every other `root`/`depmap_root()` in this file —
+    `root` means "the DepMap data directory" everywhere else here
+    (`depmap_root`, `codep_prepare`, `depmap_codependencies`, ...), and reusing
+    that name for an unrelated results-output path would make it easy to
+    copy-paste a DepMap-root variable into the wrong call and silently write
+    a run's output into the DepMap release directory instead of `results/`.
+
+    No cwd-relative default (a bare "results" silently resolves against
+    whatever directory the kernel session happens to be running in) and no
+    isdir check (unlike `depmap_root()`, this is written to, not read from,
+    so it may not exist yet on a first run — the topic/run makedirs call
+    creates it).
+    """
+    if results_root is None:
+        results_root = os.environ.get("SCIENCE_RESULTS_ROOT")
+    if results_root is None:
+        raise FileNotFoundError(
+            "No results root configured. Set $SCIENCE_RESULTS_ROOT to this "
+            "repo's results/ directory, or pass results_root= explicitly.")
+    return results_root
+
+
+def genetea_run_dir(name, results_root=None, topic=None, make=True):
     """Path for one analysis run: <root>/<topic>/<slug>/, with scripts/ beside it.
 
     `name` is typically the query gene or a short label for a gene set (e.g.
     "TP53" or "screen_hits_batch3"); slugged to snake_case because result
     directories are named that way and a raw label may carry spaces or case.
 
+    `results_root` resolves via `genetea_results_root()` — $SCIENCE_RESULTS_ROOT
+    or an explicit `results_root=` — before anything is created. Named
+    `results_root`, not `root`, deliberately: see `genetea_results_root()`'s
+    docstring for why reusing this file's dominant `root` parameter name
+    would be a footgun here specifically.
+
     `topic` defaults to RESULTS_TOPIC through an explicit None check rather
     than in the signature: the kernel.py sidecar loader rejects a non-literal
     default, and a rejected file defines none of this module's helpers.
     """
+    root = genetea_results_root(results_root)
     topic = RESULTS_TOPIC if topic is None else topic
     slug = re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
     if not slug:

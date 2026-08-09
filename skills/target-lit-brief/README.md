@@ -77,9 +77,13 @@ Module constants: `SEARCH_MAX`, `METADATA_CHUNK`, `DEFAULT_OVERFETCH`,
 
 ### Saving a run
 
-- `brief_run_dir(symbol, root="results", topic="target_lit_brief")` — the
+- `results_root(root=None)` — resolves this repo's `results/` directory from
+  `$SCIENCE_RESULTS_ROOT` or an explicit `root=`; raises naming the variable
+  when neither is set, rather than silently creating a `results/` folder
+  wherever the kernel session's cwd happens to be.
+- `brief_run_dir(symbol, root=None, topic=None)` — the
   path for one brief, `<root>/<topic>/<slug>/`, with `scripts/` created
-  beside it.
+  beside it. `root` resolves via `results_root()`.
 - `brief_write_run(out_dir, symbol, kept_rows, synthesis_text, stats,
   gene_name="", query="", scripts=())` — wraps `write_paper_table` and
   `write_brief` rather than replacing them: writes

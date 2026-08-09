@@ -1421,17 +1421,45 @@ CANDIDATE_COLUMNS = ("pdb_id", "method", "resolution", "r_free", "state",
                      "coverage", "n_mutations", "score")
 
 
-def gps_run_dir(target, root="results", topic=None, make=True):
+def results_root(root=None):
+    """Resolve this repo's results/ directory. Requires $SCIENCE_RESULTS_ROOT or root=.
+
+    No cwd-relative default (a bare "results" silently resolves against
+    whatever directory the kernel session happens to be running in, which is
+    not reliably this repo's checkout) and no isdir check (unlike
+    depmap-local's depmap_root(), a results root is written to, not read
+    from, so it may not exist yet on a first run — the topic/run makedirs
+    call creates it). Distinct from `out_dir="structures"`, the default on
+    `fetch_pdb`/`fetch_alphafold`/`prep_structure` for standalone,
+    non-run-saving use — this only governs `gps_run_dir`/
+    `get_structure_to_results`.
+    """
+    if root is None:
+        root = os.environ.get("SCIENCE_RESULTS_ROOT")
+    if root is None:
+        raise FileNotFoundError(
+            "No results root configured. Set $SCIENCE_RESULTS_ROOT to this "
+            "repo's results/ directory, or pass root= explicitly.")
+    return root
+
+
+def gps_run_dir(target, root=None, topic=None, make=True):
     """Path for one structure run: <root>/<topic>/<slug>/, with scripts/ beside it.
 
     `target` is the query passed to get_structure() (gene symbol, accession,
     protein name); slugged to snake_case because result directories are named
     that way and a raw query may carry spaces or case.
 
+    `root` resolves via `results_root()` — $SCIENCE_RESULTS_ROOT or an
+    explicit `root=` — before anything is created, so a misconfigured or
+    unset root raises here rather than silently creating a `results/`
+    directory wherever the session's cwd happens to be.
+
     `topic` defaults to RESULTS_TOPIC through an explicit None check rather
     than in the signature: the kernel.py sidecar loader rejects a non-literal
     default, and a rejected file defines none of this module's helpers.
     """
+    root = results_root(root)
     topic = RESULTS_TOPIC if topic is None else topic
     slug = re.sub(r"[^a-z0-9]+", "_", str(target).strip().lower()).strip("_")
     if not slug:
@@ -1610,7 +1638,7 @@ def gps_write_run(out_dir, name, result, summary=None, files=(),
     return written
 
 
-def get_structure_to_results(query, name=None, root="results",
+def get_structure_to_results(query, name=None, root=None,
                              topic=None, summary=None, files=(),
                              data_sources=(), limits=(), scripts=(),
                              with_site=False, donor_pdb_id=None, **kwargs):
@@ -1623,14 +1651,14 @@ def get_structure_to_results(query, name=None, root="results",
     `get_structure_with_site()` when the downstream step needs a pocket
     regardless of what the chosen entry has.
 
-    `topic` defaults to RESULTS_TOPIC through an explicit None check rather
-    than in the signature: the kernel.py sidecar loader rejects a non-literal
-    default, and a rejected file defines none of this module's helpers.
+    `root`/`topic` are passed straight through to `gps_run_dir`, which
+    resolves `root` via `results_root()` ($SCIENCE_RESULTS_ROOT or an
+    explicit `root=`) — not re-resolved here, so there is exactly one place
+    that decides where a run's output goes.
 
     Returns the `get_structure()`-shaped result dict with a `run` key added:
     the `{name: path}` dict `gps_write_run` returned.
     """
-    topic = RESULTS_TOPIC if topic is None else topic
     out_dir = gps_run_dir(name or query, root=root, topic=topic)
     if with_site:
         res = get_structure_with_site(query, out_dir=out_dir,

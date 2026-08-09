@@ -44,7 +44,10 @@ To save the run instead of a one-off file (structure files, the ranked
 candidates table, the pocket-residues table, and a README whose Limits
 section is `structure_caveats()` verbatim), use `get_structure_to_results`,
 not `get_structure` — it saves into `results/protein_structure/<target>/`
-rather than the bare `structures/` default:
+rather than the bare `structures/` default. Needs `$SCIENCE_RESULTS_ROOT` set
+to this repo's `results/` directory, or an explicit `root=` — it raises
+naming the variable rather than silently writing `results/` wherever the
+session's cwd happens to be:
 
 ```python
 res = get_structure_to_results("KRAS", summary="...",

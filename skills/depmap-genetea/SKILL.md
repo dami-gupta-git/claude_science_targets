@@ -63,7 +63,11 @@ For a gene set you already have (screen hits, a cluster), skip to
 
 6. Save the run — `genetea_write_run(out_dir, name, summary, gene=..., codependencies=...,
    terms=..., provenance=...)`, not assembled by hand, into
-   `results/depmap_genetea/<name>/`. `out_dir` comes from `genetea_run_dir(name)`.
+   `results/depmap_genetea/<name>/`. `out_dir` comes from `genetea_run_dir(name)`,
+   which needs `$SCIENCE_RESULTS_ROOT` set to this repo's `results/` directory
+   (or an explicit `results_root=` — note that argument name, not `root=`: this
+   file's `root` means the DepMap data directory everywhere else in it, and
+   `genetea_run_dir` deliberately uses a different name to avoid that collision).
    This is for an analysis run against a real query, not the calibration
    fixtures (`calibration.png`, the `codependency_*` CSVs) this skill ships
    beside `SKILL.md` — those document a threshold and stay with the skill.

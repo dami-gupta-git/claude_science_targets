@@ -88,8 +88,11 @@ press-release-only — say so explicitly and lower confidence.
 10. **Save the run** — `audit_write_run(out_dir, name, summary, candidate=...,
     evidence_rows=..., trial_rows=...)`, not assembled by hand, into
     `results/ai_origination_audit/<name>/`. `out_dir` comes from
-    `audit_run_dir(name)`. Fails before writing anything if `candidate` has no
-    `tier` set.
+    `audit_run_dir(name)`, which needs `$SCIENCE_RESULTS_ROOT` set to this
+    repo's `results/` directory (or an explicit `root=`) — it raises naming
+    the variable rather than silently creating a `results/` folder wherever
+    the session's cwd happens to be. Fails before writing anything if
+    `candidate` has no `tier` set.
 
 ```python
 out_dir = audit_run_dir("CandidateX")

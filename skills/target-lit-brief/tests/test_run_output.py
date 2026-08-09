@@ -10,6 +10,26 @@ import pytest
 import kernel as k
 
 
+def test_results_root_raises_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("SCIENCE_RESULTS_ROOT", raising=False)
+    with pytest.raises(FileNotFoundError, match="SCIENCE_RESULTS_ROOT"):
+        k.results_root()
+
+
+def test_run_dir_raises_and_creates_nothing_when_root_unconfigured(monkeypatch, tmp_path):
+    monkeypatch.delenv("SCIENCE_RESULTS_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        k.brief_run_dir("USP1")
+    assert not (tmp_path / "results").exists()
+
+
+def test_run_dir_honours_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("SCIENCE_RESULTS_ROOT", str(tmp_path))
+    out_dir = k.brief_run_dir("USP1")
+    assert out_dir == str(tmp_path / "target_lit_brief" / "usp1")
+
+
 def paper_row(pmid="12345678"):
     return {"pmid": pmid, "date": "2025-01-01", "journal": "J. Test",
             "title": "A test paper", "first_author": "Smith", "n_authors": 1,

@@ -207,7 +207,26 @@ STANDING_LIMITS = (
 )
 
 
-def fusion_run_dir(subject, root="results", topic=None, make=True):
+def results_root(root=None):
+    """Resolve this repo's results/ directory. Requires $SCIENCE_RESULTS_ROOT or root=.
+
+    No cwd-relative default (a bare "results" silently resolves against
+    whatever directory the kernel session happens to be running in, which is
+    not reliably this repo's checkout) and no isdir check (unlike
+    depmap-local's depmap_root(), a results root is written to, not read
+    from, so it may not exist yet on a first run — the topic/run makedirs
+    call creates it).
+    """
+    if root is None:
+        root = os.environ.get("SCIENCE_RESULTS_ROOT")
+    if root is None:
+        raise FileNotFoundError(
+            "No results root configured. Set $SCIENCE_RESULTS_ROOT to this "
+            "repo's results/ directory, or pass root= explicitly.")
+    return root
+
+
+def fusion_run_dir(subject, root=None, topic=None, make=True):
     """Path for one fusion run: <root>/<topic>/<slug>/, with scripts/ beside it.
 
     `subject` is a gene symbol for a single-target dossier or a disease or
@@ -215,10 +234,16 @@ def fusion_run_dir(subject, root="results", topic=None, make=True):
     adenocarcinoma"); it is slugged to snake_case because result directories
     are named that way and a raw subject may carry spaces, hyphens or case.
 
+    `root` resolves via `results_root()` — $SCIENCE_RESULTS_ROOT or an
+    explicit `root=` — before anything is created, so a misconfigured or
+    unset root raises here rather than silently creating a `results/`
+    directory wherever the session's cwd happens to be.
+
     `topic` defaults to RESULTS_TOPIC through an explicit None check rather
     than in the signature: the kernel.py sidecar loader rejects a non-literal
     default, and a rejected file defines none of this module's helpers.
     """
+    root = results_root(root)
     topic = RESULTS_TOPIC if topic is None else topic
     slug = re.sub(r"[^a-z0-9]+", "_", str(subject).strip().lower()).strip("_")
     if not slug:
