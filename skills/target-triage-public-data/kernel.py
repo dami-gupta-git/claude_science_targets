@@ -19,7 +19,11 @@ PANEL_MEAN_LOO_COL = "_panel_mean_loo"
 
 # Declared so an all-dropped scan returns an empty frame with the real columns
 # rather than a column-less one, on which res.r_partial raises AttributeError.
-SCAN_COLUMNS = ("drug", "n", "r", "p", "r_partial", "p_partial", "confound")
+# The BH columns belong here for the same reason: they are added after the
+# early return on an empty result, so without them an all-dropped scan would be
+# missing exactly the two columns a caller filters on.
+SCAN_COLUMNS = ("drug", "n", "r", "p", "r_partial", "p_partial", "confound",
+                "q_BH", "q_partial_BH")
 OT_GRAPHQL = "https://api.platform.opentargets.org/api/v4/graphql"
 GDSC_RELEASE_BASE = "https://ftp.sanger.ac.uk/pub/project/cancerrxgene/releases/release-8.4/"
 CBIO_API = "https://www.cbioportal.org/api"
@@ -309,6 +313,7 @@ def load_prism(matrix_path, compound_list_path, drug_names=None):
     bot verification, so these files are downloaded by hand and arriving
     incomplete is a realistic outcome.
     """
+    import collections
     import csv
     want = {}
     with open(compound_list_path) as fh:
@@ -328,7 +333,7 @@ def load_prism(matrix_path, compound_list_path, drug_names=None):
             lines = next(rd)[1:]
         except StopIteration:
             raise ValueError(f"{matrix_path} is empty; expected a header of cell-line ids")
-        dupes = sorted({c for c in lines if lines.count(c) > 1})
+        dupes = sorted(c for c, k in collections.Counter(lines).items() if k > 1)
         if dupes:
             raise ValueError(
                 f"{matrix_path} header repeats {len(dupes)} cell-line id(s): {dupes[:10]}. "
@@ -406,3 +411,169 @@ def prism_secondary_has(path, drug_names):
             if n:
                 present.add(n)
     return {d: (d.lower() in present) for d in drug_names}
+
+
+# --- Run README ------------------------------------------------------------
+#
+# Word caps below are editorial, not derived: they were set from the shortest
+# existing run README in results/target_triage that a non-specialist could still
+# follow, and they exist to stop a run README growing into a second copy of the
+# analysis. Raise them here rather than working around them at the call site.
+SUMMARY_MAX_WORDS = 130
+FINDING_MAX_WORDS = 90
+README_STEPS = ("Dependency", "Tractability", "Sensitivity", "Clinical")
+
+
+def format_p(p):
+    """Render a p-value for prose: '0.21', '2.5 × 10⁻⁴', or '< 1 × 10⁻³⁰⁰'.
+
+    Scientific notation below 0.001 because the triage routinely produces
+    exponents past -12, where decimal form is unreadable. Values that underflowed
+    to 0.0 render as a bound rather than as '0', which would claim more than the
+    float can carry.
+    """
+    if p is None:
+        return "n/a"
+    p = float(p)
+    if not np.isfinite(p):
+        return "n/a"
+    if p <= 0:
+        return "< 1 × 10⁻³⁰⁰"
+    if p >= 0.001:
+        return f"{p:.3g}"
+    mantissa, exponent = f"{p:.1e}".split("e")
+    digits = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+    return f"{mantissa} × 10{str(int(exponent)).translate(digits)}"
+
+
+def is_pvalue_key(key):
+    """Does this column name hold a p-value or an FDR-adjusted q-value?
+
+    Both prefixes are covered because sensitivity_scan is a primary producer of
+    tables fed into triage_readme and it emits q_BH and q_partial_BH alongside p
+    and p_partial; a q of 1e-30 rendered as a plain float while the p beside it
+    renders in scientific notation is an inconsistency in the same row.
+    """
+    return any(key == s or key.endswith("_" + s) or key.startswith(s + "_")
+               for s in ("p", "q"))
+
+
+def markdown_table(rows, headers=None):
+    """Render a list of dicts (or a DataFrame) as a markdown table.
+
+    Column order follows `headers` when given, otherwise the first row's key
+    order — dict ordering is insertion-ordered, so the caller controls layout by
+    how the row is built. Floats print at 3 significant figures; columns named
+    as p-values or q-values (see is_pvalue_key) go through format_p.
+    """
+    if hasattr(rows, "to_dict"):
+        rows = rows.to_dict("records")
+    rows = list(rows)
+    if not rows:
+        raise ValueError("markdown_table got no rows; omit the table instead of passing an empty one")
+    cols = list(headers) if headers else list(rows[0].keys())
+
+    def cell(key, value):
+        if value is None:
+            return "—"
+        if is_pvalue_key(key):
+            return format_p(value)
+        if isinstance(value, float):
+            return "—" if not np.isfinite(value) else f"{value:.3g}"
+        return str(value)
+
+    lines = ["| " + " | ".join(cols) + " |",
+             "|" + "|".join(["---"] * len(cols)) + "|"]
+    for row in rows:
+        lines.append("| " + " | ".join(cell(c, row.get(c)) for c in cols) + " |")
+    return "\n".join(lines)
+
+
+def check_words(text, cap, label):
+    """Enforce a word cap, naming the count and the constant that set it."""
+    n = len(str(text).split())
+    if n > cap:
+        raise ValueError(
+            f"{label} is {n} words, over the {cap}-word cap. Cut it, or raise "
+            f"the cap in kernel.py if the whole class of runs needs more room.")
+    return n
+
+
+def triage_readme(gene, summary, steps, files, data_sources, limits, title=None):
+    """Render a run README for one target triage. Returns markdown text.
+
+    The caller supplies the interpretation and this assembles the document, so
+    that every run in results/ has the same sections in the same order. Structure
+    follows `coding-standards` (Result, Files, Data sources, Limits) and prose
+    conventions follow `doc-style`.
+
+    `summary` is the opening paragraph and is the part a non-specialist reads:
+    plain prose, no bullets, no statistics — those belong in the step findings
+    below it. It is capped at SUMMARY_MAX_WORDS.
+
+    `steps` is an ordered list of dicts, one per triage step:
+        {"name": "Dependency",          # free text; README_STEPS are the usual four
+         "finding": "one short para",   # capped at FINDING_MAX_WORDS
+         "table": [{...}, ...],         # optional, list of dicts or DataFrame
+         "headers": [...],              # optional column order for that table
+         "skipped": "why"}              # optional; renders instead of finding
+    A step that could not be run is reported with `skipped` rather than omitted,
+    because "not runnable on these data" and "not looked at" are different claims
+    and the reader cannot distinguish them from an absent section.
+
+    `files` is a list of (name, description) pairs or dicts with those keys;
+    `data_sources` and `limits` are lists of strings.
+    """
+    if not steps:
+        raise ValueError("triage_readme got no steps; a README with no findings is not a result")
+    check_words(summary, SUMMARY_MAX_WORDS, "summary")
+    if "\n-" in f"\n{str(summary).strip()}" or str(summary).strip().startswith("-"):
+        raise ValueError("summary must be plain prose, not bullets — it is the paragraph a "
+                         "non-specialist reads first")
+
+    parts = [f"# {title or f'{gene} target triage'}", "", str(summary).strip(), ""]
+
+    parts += ["## Result", ""]
+    for step in steps:
+        name = step.get("name")
+        if not name:
+            raise ValueError(f"step {step!r} has no 'name'")
+        parts += [f"### {name}", ""]
+        skipped = step.get("skipped")
+        if skipped:
+            parts += [f"Not run. {str(skipped).strip()}", ""]
+            continue
+        finding = step.get("finding")
+        if not finding:
+            raise ValueError(
+                f"step '{name}' has neither 'finding' nor 'skipped'; say what it showed "
+                "or say why it could not be run")
+        check_words(finding, FINDING_MAX_WORDS, f"finding for step '{name}'")
+        parts += [str(finding).strip(), ""]
+        table = step.get("table")
+        if table is not None and len(table):
+            parts += [markdown_table(table, step.get("headers")), ""]
+
+    parts += ["## Files", ""]
+    for entry in files:
+        name, description = (entry["name"], entry["description"]) if isinstance(entry, dict) else entry
+        parts.append(f"- `{name}` — {description}")
+    parts += ["", "## Data sources", ""]
+    parts += [f"- {s}" for s in data_sources]
+    parts += ["", "## Limits", ""]
+    parts += [f"- {s}" for s in limits]
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def write_triage_readme(path, gene, summary, steps, files, data_sources, limits, title=None):
+    """Write triage_readme() output to `path`. Returns the text written.
+
+    The encoding is pinned because format_p emits '×' and superscript digits for
+    any p below 0.001, which every real run produces; on a non-UTF-8 default
+    locale an unpinned open() would raise UnicodeEncodeError after the analysis
+    had already completed.
+    """
+    text = triage_readme(gene, summary, steps, files, data_sources, limits, title=title)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return text

@@ -26,8 +26,10 @@ functions that loads into the Python kernel alongside it.
   behind any surviving row.
 - `sensitivity_scan(df, expr_col, drug_cols)` — per-drug raw and partial
   correlations against one expression column, Benjamini-Hochberg corrected.
-  Drugs that could not be tested are listed in `.attrs["dropped"]` with their n
-  and the reason, and summarised on stdout.
+  Columns are `SCAN_COLUMNS` whether or not any drug survived, so a scan in
+  which every drug fell below `min_n` still exposes `r_partial` and
+  `q_partial_BH` as empty columns. Drugs that could not be tested are listed in
+  `.attrs["dropped"]` with their n and the reason, and summarised on stdout.
 - `classify_gene_effect(effect)` — labels a Chronos gene effect `essential`,
   `intermediate`, `dispensable` or `unknown` against
   `DEPMAP_ESSENTIAL_THRESHOLD`.
@@ -41,6 +43,18 @@ functions that loads into the Python kernel alongside it.
   names join.
 - `reconcile_fetch(expected_ids, fetched_ids)` — asserts a batched fetch
   returned every id the search promised, and returns the missing ids.
+- `triage_readme(gene, summary, steps, files, data_sources, limits)` — renders a
+  run README as markdown: an opening plain-prose paragraph, one section per
+  triage step with an optional table, then Files, Data sources and Limits.
+- `write_triage_readme(path, ...)` — the same, written to `path`.
+- `markdown_table(rows, headers=None)` — a list of dicts or a DataFrame as a
+  markdown table; p-value and q-value columns are formatted, missing values
+  render as `—`.
+- `is_pvalue_key(key)` — whether a column name holds a p-value or an
+  FDR-adjusted q-value, matching `p` or `q` as a whole underscore-separated
+  component so that `q_partial_BH` is caught and `quantile` is not.
+- `format_p(p)` — renders a p-value for prose, in scientific notation below
+  0.001 and as a bound when it has underflowed to zero.
 
 ## Thresholds
 
@@ -56,6 +70,15 @@ alongside.
 
 `sensitivity_scan` defaults to `min_n = 15` cell lines per drug. Drugs below it
 are excluded from the returned rows and recorded in `.attrs["dropped"]`.
+
+`SUMMARY_MAX_WORDS = 130` and `FINDING_MAX_WORDS = 90` cap the run README's
+opening paragraph and each step finding. These are editorial rather than derived:
+they were set from the shortest run README in `results/target_triage` that a
+non-specialist could still follow, and they exist so a run README stays an
+orientation document rather than becoming a second copy of the analysis. Re-derive
+by writing a README a general reader can follow without the CSVs and counting its
+words; raise the constants in `kernel.py` rather than splitting text across fields
+to evade them.
 
 ## Error paths
 
@@ -166,13 +189,21 @@ to an unrelated config, and `conftest.py` fails with an actionable message when
 scipy or statsmodels is missing. All inputs are synthesised, so no DepMap
 release, GDSC download, network access or credentials are needed.
 
-55 tests across four modules. `test_partial_corr.py` checks the partial
+83 tests across five modules. `test_readme.py` covers the run-README generator:
+that the opening paragraph precedes every heading and number, that a skipped step
+is reported rather than omitted, that the word caps hold at the boundary, that
+a p-value which underflowed to zero renders as a bound, and that the file is
+written as UTF-8 with the platform default substituted for ASCII, since the
+generator emits `×` and superscript digits on every run that produces a p below
+0.001. `test_partial_corr.py` checks the partial
 correlation coefficient against the closed-form first-order identity computed
 from independent `pearsonr` calls, so the test cannot pass merely by agreeing
 with the implementation's residual-regression route. `test_guards.py` checks the
 p-value against the t-distribution at n−3 degrees of freedom, and asserts it
 exceeds the value `pearsonr` would report on the residuals — the direction that
-fails if the n−2 form is ever restored. Each guard was mutation-checked by
+fails if the n−2 form is ever restored. It also asserts that an all-dropped scan
+and a populated one carry identical columns, the two frames being built on
+different code paths. Each guard was mutation-checked by
 reverting it and confirming the intended test, and only that test, fails.
 
 ## Scope

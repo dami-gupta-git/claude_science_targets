@@ -13,6 +13,7 @@ dependencies = [
     "pyarrow>=25.0.0",     # depmap-local: column-addressable parquet cache
     "pytest>=9.1.1",
     "rdkit>=2025.3.1",     # boltz-affinity-triage: compound property matching
+    "requests>=2.34.2",
     "scikit-learn>=1.9.0", # depmap-genetea: GeneTEA model runtime
     "scipy>=1.18.0",
     "statsmodels>=0.14.6", # target-triage-public-data: BH correction

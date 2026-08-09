@@ -240,6 +240,35 @@ missing = reconcile_fetch(search_pmids, [a["identifiers"]["pmid"] for a in arts]
 
 ## Reporting
 
+Every run writes a `README.md` into its results directory. Build it with
+`write_triage_readme()` rather than by hand, so runs stay comparable:
+
+```python
+write_triage_readme(
+    f"{out_dir}/README.md", gene="WRN",
+    summary="Plain prose a non-specialist can follow. No statistics, no bullets.",
+    steps=[
+        {"name": "Dependency", "finding": "...", "table": strata_df},
+        {"name": "Tractability", "finding": "..."},
+        {"name": "Sensitivity", "skipped": "No inhibitor in the screens on disk."},
+        {"name": "Clinical", "finding": "..."},
+    ],
+    files=[("wrn_triage.png", "the figure")],
+    data_sources=["DepMap 24Q2 CRISPRGeneEffect.csv"],
+    limits=["Knockout is not pharmacological inhibition."])
+```
+
+The opening `summary` is the part a non-specialist reads: one plain paragraph,
+capped at 130 words, no statistics — those go in the step findings, each capped
+at 90. The caps are deliberate. A run README is an orientation document, not a
+second copy of the analysis; the CSVs carry the detail. Raise the constants in
+`kernel.py` if a whole class of runs needs more room, rather than splitting text
+across fields to evade the cap.
+
+A step that could not be run is reported with `skipped`, never omitted — "not
+runnable on these data" and "not looked at" are different claims, and an absent
+section reads as the second.
+
 - Lead with the dependency number and its comparators.
 - Report partial correlations; mention raw ones only to explain why they were
   discarded.

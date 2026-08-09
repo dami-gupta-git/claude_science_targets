@@ -16,7 +16,8 @@ from scipy import stats
 
 from kernel import (partial_corr, confounder_check, sensitivity_scan, load_prism,
                     load_prism_secondary, ot_essentiality_frame,
-                    classify_gene_effect, DEPMAP_ESSENTIAL_THRESHOLD)
+                    classify_gene_effect, DEPMAP_ESSENTIAL_THRESHOLD,
+                    SCAN_COLUMNS)
 
 
 def _write_csv(path, rows):
@@ -163,13 +164,30 @@ def test_sensitivity_scan_records_dropped_drugs():
 
 def test_sensitivity_scan_empty_result_still_has_columns():
     # An all-dropped scan used to return a column-less frame, so res.r_partial
-    # raised AttributeError instead of yielding an empty column.
+    # raised AttributeError instead of yielding an empty column. The BH columns
+    # are asserted here too because they are added after the empty-result early
+    # return, so they were the one part of the schema the guard did not cover.
     df = pd.DataFrame({"expr": [1., 2, 3], "drugA": [1., None, None],
                        "drugB": [2., None, None]})
     res = sensitivity_scan(df, "expr", ["drugA", "drugB"], min_n=15)
     assert len(res) == 0
     assert list(res.r_partial) == []
+    assert list(res.q_BH) == []
+    assert list(res.q_partial_BH) == []
     assert len(res.attrs["dropped"]) == 2
+
+
+def test_sensitivity_scan_columns_match_between_empty_and_populated():
+    # The two exit paths build the frame differently, so the schema a caller
+    # filters on must be asserted identical rather than assumed.
+    empty = sensitivity_scan(
+        pd.DataFrame({"expr": [1., 2, 3], "drugA": [1., None, None],
+                      "drugB": [2., None, None]}),
+        "expr", ["drugA", "drugB"], min_n=15)
+    populated = sensitivity_scan(_scan_frame(), "expr",
+                                 ["drug%d" % i for i in range(6)])
+    assert len(populated) > 0
+    assert list(empty.columns) == list(populated.columns) == list(SCAN_COLUMNS)
 
 
 def test_sensitivity_scan_raises_on_missing_drug_column():
