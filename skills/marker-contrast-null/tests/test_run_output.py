@@ -8,7 +8,8 @@ import os
 import pandas as pd
 import pytest
 
-from kernel import mcn_run_dir, mcn_run_readme, mcn_verdict, mcn_write_run, results_root
+from kernel import (mcn_link_into, mcn_run_dir, mcn_run_readme, mcn_verdict,
+                    mcn_write_run, results_root)
 
 
 def test_results_root_raises_when_unconfigured(monkeypatch):
@@ -116,3 +117,43 @@ def test_run_readme_rejects_bulleted_summary():
 def test_run_readme_requires_summary():
     with pytest.raises(ValueError):
         mcn_run_readme("name", contrast(), rank(), summary=None)
+
+
+def test_link_into_creates_relative_symlink_to_canonical_dir(tmp_path):
+    canonical = tmp_path / "results" / "marker_contrast_null" / "usp1_slug"
+    canonical.mkdir(parents=True)
+    link_path = tmp_path / "results" / "target_triage" / "usp1" / "marker_null"
+    mcn_link_into(str(canonical), str(link_path))
+    assert os.path.islink(str(link_path))
+    assert os.path.realpath(str(link_path)) == os.path.realpath(str(canonical))
+    assert not os.path.isabs(os.readlink(str(link_path)))
+
+
+def test_link_into_is_a_noop_when_already_linked(tmp_path):
+    canonical = tmp_path / "canonical"
+    canonical.mkdir()
+    link_path = tmp_path / "caller" / "marker_null"
+    mcn_link_into(str(canonical), str(link_path))
+    target_before = os.readlink(str(link_path))
+    mcn_link_into(str(canonical), str(link_path))
+    assert os.readlink(str(link_path)) == target_before
+
+
+def test_link_into_replaces_a_stale_link(tmp_path):
+    old_canonical = tmp_path / "old"
+    old_canonical.mkdir()
+    new_canonical = tmp_path / "new"
+    new_canonical.mkdir()
+    link_path = tmp_path / "caller" / "marker_null"
+    mcn_link_into(str(old_canonical), str(link_path))
+    mcn_link_into(str(new_canonical), str(link_path))
+    assert os.path.realpath(str(link_path)) == os.path.realpath(str(new_canonical))
+
+
+def test_link_into_refuses_to_overwrite_a_real_directory(tmp_path):
+    canonical = tmp_path / "canonical"
+    canonical.mkdir()
+    link_path = tmp_path / "caller" / "marker_null"
+    link_path.mkdir(parents=True)
+    with pytest.raises(FileExistsError):
+        mcn_link_into(str(canonical), str(link_path))

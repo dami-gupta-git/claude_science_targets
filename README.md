@@ -9,6 +9,8 @@ Most analysis skills share one premise: the obvious analysis gives the wrong ans
 
 See [`skills/README_SKILLS.md`](skills/README_SKILLS.md) for a plain-language description of each skill, and [`skills/coding-standards`](skills/coding-standards) for the layout and naming rules both directories follow.
 
+For how the analysis skills relate and the recommended order of use, see [`skills/RUNNING_ORDER.md`](skills/RUNNING_ORDER.md).
+
 ## Skills
 
 Grouped as in `README_SKILLS.md`:
@@ -52,7 +54,7 @@ uv sync --extra genetea  # + GeneTEA path for depmap-genetea
 uv sync --all-extras     # + matplotlib for re-running scripts under results/
 ```
 
-Verified on Python 3.12. On a bare checkout (no data files), 289 tests pass and 29 skip. With `$DEPMAP_ROOT` and `$GENETEA_MODEL` set and the `genetea` extra installed, `depmap-genetea` runs fully.
+Verified on Python 3.12. With `$DEPMAP_ROOT` and `$GENETEA_MODEL` set and the `genetea` extra installed, `depmap-genetea` runs fully.
 
 Working inside Claude Science rather than a clone, add packages with `manage_packages` instead of bare `pip install` (see `coding-standards`).
 
@@ -104,23 +106,13 @@ Four skills need nothing beyond publishing: `code-review`, `doc-style`, `coding-
 
 ## Tests
 
-Seven skills ship test suites. Run from the skill directory:
+`boltz-affinity-triage`, `target-triage-public-data`, `depmap-local`, `depmap-fusion`, `depmap-genetea`, `marker-contrast-null`, `get-protein-structure`, `target-lit-brief`, and `ai-origination-audit` ship test suites. Run from the skill directory:
 
 ```bash
 python -m pytest
 ```
 
 Each carries a `pytest.ini` that pins `rootdir`. Suites that need missing data files or models skip rather than fail, so a bare checkout stays green.
-
-| Skill                       | Tests                  | Interpreter needs  |
-|-----------------------------|------------------------|--------------------|
-| `boltz-affinity-triage`     | 130 passed, 8 skipped  | rdkit              |
-| `target-triage-public-data` | 24                     | scipy, statsmodels |
-| `depmap-local`              | 19                     | pandas, pyarrow    |
-| `depmap-fusion`             | 19                     | pandas             |
-| `depmap-genetea`            | 13 passed, 27 skipped  | scikit-learn       |
-| `marker-contrast-null`      | 16                     | scipy              |
-| `get-protein-structure`     | 11                     | gemmi              |
 
 ## Scope and layout
 
@@ -129,4 +121,5 @@ Each carries a `pytest.ini` that pins `rootdir`. Suites that need missing data f
 - Publishing, agent profiles, and connector configuration are handled by the `customize` and `skill-creator` skills, not from this repository.
 
 ## Portability notes
-Paths are driven by environment variables (`$DEPMAP_ROOT`, `$GENETEA_MODEL`, `$SCIENCE_RESULTS_ROOT`) or explicit arguments, with clear errors when unset. See `env.example` and `pyproject.toml`.
+
+Earlier absolute-path defaults that tied the code to one development machine have been removed. Paths are now driven by environment variables (`$DEPMAP_ROOT`, `$GENETEA_MODEL`, `$SCIENCE_RESULTS_ROOT`) or explicit arguments, with clear errors when unset. See `env.example` and `pyproject.toml`.

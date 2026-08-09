@@ -261,11 +261,10 @@ def rank_structures(accession, prefer_ligand=True, prefer_wildtype=True,
                     min_coverage=0.0, methods=None, max_entries=60):
     """Rank every PDB entry for a UniProt accession. Returns list of dicts, best first.
 
-    Score: resolution + UniProt coverage + method, with bonuses for a
-    drug-like ligand (prefer_ligand) and penalty for engineered mutations
-    (prefer_wildtype). `coverage` is the fraction of the FULL UniProt
-    sequence observed — for multi-domain targets the useful entries often
-    cover ~0.3, so read the coverage column rather than trusting rank alone.
+    Score: resolution + UniProt coverage + method, with bonuses for a drug-like
+    ligand (prefer_ligand) and a penalty for engineered mutations
+    (prefer_wildtype). `coverage` is the fraction of the FULL UniProt sequence
+    observed, so on a multi-domain target read that column rather than the rank.
     """
     rows = sifts_chains(accession)
     if not rows:
@@ -516,9 +515,8 @@ def prep_structure(in_path, out_path, chains=None, keep_waters=False,
 def ligand_copies(path_or_st, ligand_comp_id, model_index=0):
     """Every copy of a ligand in the structure: [{chain, seq_id, n_atoms}].
 
-    A ligand present in several chains of a multimer yields several copies —
-    pocket_residues/ligand_box operate on ONE copy, so check this first when
-    the entry has more than one protein chain.
+    A ligand in several chains of a multimer yields several copies, and
+    pocket_residues/ligand_box operate on one; check this on a multi-chain entry.
     """
     import gemmi
     st = gemmi.read_structure(path_or_st) if isinstance(path_or_st, str) else path_or_st
@@ -532,10 +530,9 @@ def pocket_residues(path_or_st, ligand_comp_id, radius=5.0, model_index=0,
                     chain=None, all_copies=False):
     """Protein residues within `radius` A of a bound ligand, nearest-atom distance.
 
-    Returns list of {chain, seq_id, comp_id, min_dist} sorted by sequence.
-    Defaults to the FIRST copy of the ligand — in a multimer the same ligand
-    sits in every chain, and pooling them would report one merged pseudo-site.
-    Pass chain= to pick a copy or all_copies=True to pool deliberately.
+    Returns [{chain, seq_id, comp_id, min_dist}] sorted by sequence. Uses the
+    first ligand copy, since pooling copies across a multimer reports one merged
+    pseudo-site; pass chain= to pick a copy or all_copies=True to pool.
     """
     import gemmi
     st = gemmi.read_structure(path_or_st) if isinstance(path_or_st, str) else path_or_st
@@ -569,9 +566,8 @@ def pocket_residues(path_or_st, ligand_comp_id, radius=5.0, model_index=0,
 def ligand_box(path_or_st, ligand_comp_id, padding=4.0, model_index=0, chain=None):
     """Docking box (center + size, Angstrom) around ONE copy of a bound ligand.
 
-    Uses the first copy unless chain= is given. Pooling copies across a
-    multimer would produce a box spanning both sites — never what docking
-    wants, so it is not offered.
+    Uses the first copy unless chain= is given. Pooling copies across a multimer
+    would span both sites, so it is not offered.
     """
     import gemmi
     st = gemmi.read_structure(path_or_st) if isinstance(path_or_st, str) else path_or_st
@@ -597,24 +593,14 @@ PDBE_RES_LIST = "https://www.ebi.ac.uk/pdbe/api/pdb/entry/residue_listing/"
 def residue_coverage(pdb_id, accession, chain=None):
     """Per-residue observed/missing map for one PDB chain, in UniProt numbering.
 
-    Answers the question resolution and coverage numbers hide: WHICH residues
-    does this entry actually observe? Uses PDBe residue_listing
-    (observed_ratio per residue) plus the SIFTS segment offsets.
+    Which residues the entry observes, from PDBe residue_listing plus the SIFTS
+    segment offsets. Returns chain/entity/range metadata, per-residue `residues`,
+    counts, and `gaps` with `kind` in 'internal' (a loop absent from an
+    otherwise-present region), 'terminal', or 'expression_tag'.
 
-    Returns dict with:
-      chain, entity_id, unp_range, author_range, seq_offset
-      n_observed / n_partial / n_missing / n_listed / n_unmapped_residues
-        (n_unmapped_residues counts residues the chain contains but this
-        accession does not claim — a fusion partner such as 2RH1's lysozyme.
-        n_missing excludes expression_tag gaps, since those are construct
-        additions rather than missing protein)
-      residues: [{unp_num, author_num, comp_id, observed_ratio, status}]
-      gaps: [{kind, unp_start, unp_end, length, author_start, author_end}]
-        kind is 'internal' (a loop absent from an otherwise-present region —
-        the dangerous one), 'terminal' (truncated N/C terminus), or
-        'expression_tag' (construct addition numbered < 1 in UniProt space,
-        e.g. a His-tag — not missing protein, when a SIFTS segment itself
-        extends below residue 1).
+    `n_missing` excludes expression_tag gaps, which are construct additions
+    rather than missing protein. `n_unmapped_residues` counts residues the chain
+    contains but this accession does not claim, such as a fusion partner.
     """
     pid = pdb_id.lower()
     acc = accession.upper()
@@ -738,10 +724,8 @@ def residue_coverage(pdb_id, accession, chain=None):
             "author_range": [min(auths), max(auths)],
             "n_observed": sum(1 for r in target if r["status"] == "observed"),
             "n_partial": sum(1 for r in target if r["status"] == "partial"),
-            # expression_tag gaps are construct additions, not missing protein
-            # (see the classification above) -- excluded here for the same
-            # reason, or a tagged construct would inflate this count with
-            # residues that were never part of the target sequence.
+            # expression_tag gaps are construct additions, not missing protein,
+            # so counting them would inflate this for a tagged construct.
             "n_missing": sum(g["length"] for g in out_gaps if g["kind"] != "expression_tag"),
             "n_listed": len(target),
             "n_unmapped_residues": n_foreign,
@@ -777,15 +761,12 @@ def coverage_gap_report(pdb_id, accession, chain=None, ligand_comp_id=None,
                         struct_path=None, plddt=None, near_site_angstrom=8.0):
     """Coverage gaps annotated with AlphaFold confidence and pocket proximity.
 
-    For each gap: mean AF pLDDT over the missing stretch (can a predicted
-    model credibly fill it, or is it disordered there too?) and — when a
-    ligand and coordinate file are supplied — the distance from the gap's
-    flanking residues to the ligand. A short internal gap whose flanks sit
-    near the ligand is a loop that probably lines the pocket, which is the
-    classic reason docking into an otherwise-good structure fails.
+    Per gap: mean AF pLDDT over the missing stretch, and — when a ligand and
+    coordinate file are supplied — the distance from its flanking residues to
+    the ligand, which identifies a gap that lines the pocket.
 
-    `verdict` per gap: 'af_can_fill' (pLDDT >= 70), 'disordered_in_af'
-    (< 70, likely genuinely flexible), or 'unknown' (no AF model).
+    `verdict` is 'af_can_fill' (pLDDT >= 70), 'disordered_in_af' (< 70), or
+    'unknown' (no AF model).
     """
     cov = residue_coverage(pdb_id, accession, chain=chain)
     if "error" in cov:
@@ -802,10 +783,10 @@ def coverage_gap_report(pdb_id, accession, chain=None, ligand_comp_id=None,
                 and (chain is None or c.name == chain)]
         if hits:
             lig_pos = [a.pos for a in hits[0]]
-            # Key by (chain, residue) — keying on residue number alone lets one
-            # chain of a multimer overwrite another's coordinates, silently
-            # corrupting every gap-to-ligand distance. When no chain was
-            # requested, use the chain the chosen ligand copy actually sits in.
+            # Key by (chain, residue): on residue number alone one chain of a
+            # multimer overwrites another's coordinates, corrupting every
+            # gap-to-ligand distance. With no chain requested, use the one the
+            # chosen ligand copy sits in.
             lig_chain = chain
             if lig_chain is None:
                 for c in st[0]:
@@ -929,23 +910,16 @@ def span_residues(chain, keep_residues):
 def transfer_pocket(target_path, donor_pdb_id=None, accession=None, ligand_comp_id=None,
                     target_chain=None, donor_chain=None, out_dir="structures",
                     radius=5.0, padding=4.0, plddt=None, write_complex=True):
-    """Give a ligand-free model a docking site by borrowing one from a holo structure.
+    """Give a ligand-free model a docking site by superposing a liganded donor.
 
-    A predicted (AlphaFold) or apo structure has no bound ligand, so there is no
-    ligand to build a box around. This superposes a LIGANDED donor entry onto the
-    target and carries the ligand across, yielding the same outputs the
-    experimental path gives — lining residues, centre, box — plus the two numbers
-    that say whether to trust them: the superposition RMSD and the model's pLDDT
-    *at the site* (global pLDDT can be high while the pocket itself is poor).
+    Pass `donor_pdb_id` to choose the donor, or `accession` to pick the
+    best-scoring holo entry automatically. Returns `donor`, `rmsd`, `n_aligned`,
+    `ligand`, `pocket`, `box`, `site_plddt` and `confidence`; `error` when no
+    liganded donor exists.
 
-    Pass `donor_pdb_id` to choose the donor, or just `accession` to pick the
-    best-scoring holo entry automatically. Returns a dict with `donor`,
-    `rmsd`, `n_aligned`, `ligand`, `pocket`, `box`, `site_plddt` and
-    `confidence`; `error` when no liganded donor exists.
-
-    The transferred site is a HYPOTHESIS positioned by homology — good geometry
-    for a pocket that exists in the donor, silent about a pocket that does not.
-    Always report `rmsd` and `site_plddt` alongside any result derived from it.
+    The site is positioned by homology: good geometry for a pocket the donor
+    has, silent about one it does not. Report `rmsd` and `site_plddt` alongside
+    anything derived from it.
     """
     import gemmi
     if donor_pdb_id is None:
@@ -1022,12 +996,10 @@ def transfer_pocket(target_path, donor_pdb_id=None, accession=None, ligand_comp_
     if not len(pt) or not len(pd_):
         return {"error": "no polymer to superpose (target chain %s / donor chain %s)"
                          % (tch.name, dch.name)}
-    # Restrict the fit to the residues the DONOR observes. A donor that
-    # crystallised one domain (WRN helicase, 516-946) against a full-length
-    # model would otherwise be fitted globally: the spare domains drag the fit,
-    # and a 1-2 A local match comes back as 16 A with a wrong-looking site.
-    # The correspondence comes from SEQUENCE alignment, not residue numbers,
-    # because author numbering is a deposition choice the two need not share.
+    # Restrict the fit to the residues the DONOR observes: a single-domain donor
+    # fitted globally against a full-length model has its spare domains drag the
+    # fit. Correspondence is by SEQUENCE alignment, not residue numbers, since
+    # author numbering is a deposition choice the two need not share.
     pairs, seq_identity = residue_correspondence(tch, dch)
     if not pairs:
         return {"error": "no sequence correspondence between target chain %s and "
@@ -1047,12 +1019,9 @@ def transfer_pocket(target_path, donor_pdb_id=None, accession=None, ligand_comp_
             trimmed = True
     sup = gemmi.calculate_superposition(pt, pd_, pt.check_polymer_type(),
                                         gemmi.SupSelect.CaP, trim_cycles=3)
-    # A multi-domain protein can match locally and still refuse a global fit:
-    # WRN's AlphaFold model has the helicase sub-domains hinged differently from
-    # the crystal (78% of 20-residue windows agree under 2 A, yet no whole-domain
-    # fit beats ~12 A). Docking only needs the pocket's own frame, so when the
-    # global fit is poor, re-fit on the shell of residues that line the donor's
-    # ligand — that is the geometry the transferred box depends on.
+    # A multi-domain protein whose sub-domains are hinged differently can match
+    # locally and still refuse a global fit. Docking needs only the pocket's own
+    # frame, so on a poor global fit re-fit on the shell around the donor ligand.
     site_local = False
     if sup.rmsd > 2.5:
         ns0 = gemmi.NeighborSearch(st_d[0], st_d.cell, 12.0).populate()
@@ -1123,23 +1092,12 @@ def transfer_pocket(target_path, donor_pdb_id=None, accession=None, ligand_comp_
             res["site_plddt"] = {"mean": round(sum(vals) / len(vals), 1),
                                  "min": round(min(vals), 1),
                                  "n_below_70": sum(1 for v in vals if v < 70)}
-    # Confidence is calibrated on an 8-target benchmark (KRAS, EGFR, WRN, BRAF,
-    # CDK2, HSP90AA1, PARP1, BTK): transfer onto each AlphaFold model from an
-    # auto-selected donor, scored against that donor's crystallographic site.
-    # Superposition RMSD is the signal that tracks recovery; site pLDDT is not.
-    #   'high'   (6/8 cases): mean recovery 0.91, min 0.85
-    #   'medium' (1/8 cases): mean recovery 0.56
-    #   'low'    (1/8 cases): mean recovery 0.00
-    # HSP90AA1 is the cautionary row: site pLDDT 89.8 with 33.8 A RMSD, 0.502
-    # donor identity and 0.00 recovery, so a confident-looking model says
-    # nothing about whether the donor's pocket transferred correctly. pLDDT
-    # only downgrades — it answers "is the model reliable HERE", never "did
-    # the transfer work".
+    # Thresholds calibrated on an 8-target benchmark (see README); re-run it
+    # before changing them. RMSD and donor identity track site recovery, site
+    # pLDDT does not, so pLDDT can only downgrade a grade.
     sp = res.get("site_plddt") or {}
     if seq_identity < 0.8:
-        # A donor that aligns poorly is a different construct or a paralog:
-        # HSP90AA1's auto-selected donor aligns at 0.50 identity and recovers
-        # 0.00 of the site.
+        # A donor that aligns poorly is a different construct or a paralog.
         res["confidence"] = "low"
     elif sup.rmsd > 3.0:
         res["confidence"] = "low"
@@ -1405,11 +1363,9 @@ def get_structure_with_site(query, organism_id=9606, out_dir="structures",
 # Run output: results/<topic>/<run>/
 # --------------------------------------------------------------------------
 #
-# get_structure()/get_pdb_entry()/fetch_pdb()/fetch_alphafold() all default
-# out_dir="structures" for standalone use (e.g. handing a receptor straight
-# to a docking tool without saving a run). get_structure_to_results() is the
-# wrapper that routes a full run into results/<topic>/<run>/ instead, so a
-# caller does not have to pass out_dir by hand and remember to write a README.
+# The fetch/get functions default out_dir="structures" for standalone use;
+# get_structure_to_results() routes a full run into results/<topic>/<run>/
+# with its README instead.
 RESULTS_TOPIC = "protein_structure"
 CANDIDATES_CSV = "ranked_structures.csv"
 POCKET_CSV = "pocket_residues.csv"

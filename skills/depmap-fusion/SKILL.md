@@ -42,6 +42,15 @@ fusion_write_run(out_dir, "lung adenocarcinoma", rows,
                  data_sources=["Open Targets Platform", "DepMap 24Q2"])
 ```
 
+`fusion_run_dir`/`fusion_write_run` land in `results/depmap_fusion/<slug>/`
+every time, whether the fusion was asked standalone or from inside a larger
+run (a target-triage brief, say) — never at a path the caller picks. That way
+a later standalone re-run of the same subject finds the existing directory
+instead of producing a second, possibly divergent, copy. A caller that wants
+the fusion evidence to read as part of its own run directory links to it with
+`fusion_link_into(out_dir, os.path.join(caller_out_dir, "fusion"))` rather
+than copying the tables in.
+
 ## Verdicts
 
 | Verdict | Meaning |
@@ -69,31 +78,28 @@ mean. Measured on this release:
 | NRG1 | +0.19 | 0.08 | 0.08 | inert (ligand-driven) |
 | ROS1 | +0.11 | 0.11 | 0.05 | inert (fusion-driven) |
 
-Hence `SUPPRESSOR_MIN_FRAC_POS = 0.15` with `SUPPRESSOR_MIN_SD = 0.20`.
-Mean-only logic misclassifies ROS1/NRG1 as suppressors - it was the first
-version of this skill and it was wrong.
+Hence `SUPPRESSOR_MIN_FRAC_POS = 0.15` with `SUPPRESSOR_MIN_SD = 0.20`. All
+four genes have positive mean effects, so the mean alone does not separate
+them: classifying on the mean labels ROS1 and NRG1 as suppressors when they are
+untested in this panel.
 
-## Worked results
+## What a sweep returns
 
-**Lung adenocarcinoma** (MONDO_0005061), top 30 OT targets x 126 lung lines:
-concordant 11 (EGFR, KRAS, ERBB2, KEAP1) | inert-in-panel 11 (ALK, ROS1, RET,
-EML4, NRG1 - fusion/ligand-driven, unrepresented) | growth-suppressive 3
-(TP53, RB1) | evidence-without-dependency 4 | common-essential 1.
+A top-N sweep of an OT disease ranking does not return a list of targets to
+pursue. Tumour suppressors rank near the top and classify
+`growth-suppressive-mismatch`; fusion- and ligand-driven oncogenes classify
+`inert-in-panel` because the panel holds few or no lines carrying the driving
+context; replication genes classify `common-essential-no-window`. The
+actionable set is typically a minority of the list, and the discarded verdicts
+carry the reason.
 
-**Pancreatic** (MONDO_0009831), top 25 x 48 pancreas lines:
-concordant 6 | common-essential-no-window 6 (POLD1, POLE, RRM1/2, PRIM2) |
-inert 5 | evidence-without-dependency 4 (incl. SMAD4, a deleted suppressor) |
-context-restricted 2 | growth-suppressive 2 (TP53, CDKN2A).
-Actionable set: KRAS, BRCA1/2, PALB2, STK11, ARID1A, RBM10, TYMS - i.e. KRAS
-plus the HR-deficiency genes behind PARP-inhibitor use in this indication.
-
-**KRAS is `context-restricted` in pancreas but `concordant` in lung**, because
-pancreatic lines are far more KRAS-dependent (-2.14 vs -0.73 global). The
-verdict tracks the data, not a hardcoded per-gene rule.
-
-Across both, **65% of the top OT-ranked targets are not knockout-actionable**
-(36 of 55: lung 19/30, pancreatic 17/25). That is the finding, not a failure of
-either source.
+**The verdict tracks the lineage slice supplied, not a per-gene rule.** `KRAS`
+has a global mean effect of -0.72 across 1208 lines, against -2.14 in the 48
+pancreas lines and -0.88 in the 126 lung lines. Passed a pancreas
+`lineage_row`, it clears the context test (lineage mean below the global mean
+by more than 0.2, `p_bh < 0.05`) and returns `context-restricted`; passed lung,
+it does not, and returns `concordant-dependency` on its evidence and
+dependency alone.
 
 ## Honest limits
 
@@ -103,8 +109,9 @@ either source.
   differentiation-dependent targets are invisible by construction.
 - A `concordant` verdict is a prioritisation signal, not validation.
 - Check `depmap_class` before trusting `knockout_actionable`: pan-essential
-  genes are genuinely required but have no window. An earlier version of this
-  skill listed POLD1/POLE/RRM1 as actionable - the guard exists because of it.
+  genes such as POLD1, POLE and RRM1 are genuinely required by cancer lines but
+  have no therapeutic window, and are excluded from the actionable set for that
+  reason.
 - **Each verdict asserts only what was supplied.** `evidence-without-dependency`
   and `dependency-with-thin-evidence` both require `ot_score >= EVIDENCE_FLOOR`
   (0.10); rows below the floor or `None` go to `no-evidence-no-dependency` or

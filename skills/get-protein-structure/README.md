@@ -11,79 +11,35 @@ which residues the entry does not observe.
 
 ## Functions
 
-- `get_structure(query)` — identifier to prepared file: resolves the protein,
-  ranks all mapped entries, downloads and cleans the best, and returns the pocket,
-  docking box and coverage map.
-- `get_pdb_entry(pdb_id)` — same preparation for a specific entry, skipping
-  resolution and ranking.
-- `rank_structures(accession)` — the ranked candidate table alone, scored on
-  resolution, UniProt coverage, apo/holo state and engineered mutations.
-- `resolve_uniprot(query)` / `sifts_chains(accession)` / `rcsb_entries(pdb_ids)` —
-  identifier resolution, per-chain resolution and coverage from SIFTS, and batched
-  RCSB entry metadata.
-- `prep_structure(in_path, out_path, chains=...)` — removes waters, alt-locs,
-  extra models and crystallisation additives; retains structural ions, cofactors
-  and drug-like ligands.
-- `pocket_residues(path, comp_id)` / `ligand_box(...)` / `ligand_copies(...)` —
-  binding-site residues, docking box, and the ligand copies present.
-- `residue_coverage(pdb_id, accession)` / `coverage_gap_report(...)` — per-residue
-  observed/missing map in UniProt numbering, with gaps classified and annotated by
-  distance to the ligand and AlphaFold confidence.
-- `fetch_alphafold(accession)` / `plddt_by_residue(...)` — predicted model with
-  global and per-residue pLDDT.
-- `transfer_pocket(target_path, accession=...)` — assigns a binding site to a
-  ligand-free or predicted model by superposing a liganded donor entry, with a
-  calibrated confidence grade.
-- `get_structure_with_site(query)` — `get_structure()` plus automatic transfer when
-  the selected structure has no bound ligand.
-- `structure_caveats(result)` — the properties of a result that affect downstream
-  suitability, as reportable statements.
+| Function | Description |
+| --- | --- |
+| `get_structure(query)` | identifier to prepared file: resolves the protein, ranks all mapped entries, downloads and cleans the best, and returns the pocket, docking box and coverage map. |
+| `get_pdb_entry(pdb_id)` | same preparation for a specific entry, skipping resolution and ranking. |
+| `rank_structures(accession)` | the ranked candidate table alone, scored on resolution, UniProt coverage, apo/holo state and engineered mutations. |
+| `resolve_uniprot(query)` / `sifts_chains(accession)` / `rcsb_entries(pdb_ids)` | identifier resolution, per-chain resolution and coverage from SIFTS, and batched RCSB entry metadata. |
+| `prep_structure(in_path, out_path, chains=...)` | removes waters, alt-locs, extra models and crystallisation additives; retains structural ions, cofactors and drug-like ligands. |
+| `pocket_residues(path, comp_id)` / `ligand_box(...)` / `ligand_copies(...)` | binding-site residues, docking box, and the ligand copies present. |
+| `residue_coverage(pdb_id, accession)` / `coverage_gap_report(...)` | per-residue observed/missing map in UniProt numbering, with gaps classified and annotated by distance to the ligand and AlphaFold confidence. |
+| `fetch_alphafold(accession)` / `plddt_by_residue(...)` | predicted model with global and per-residue pLDDT. |
+| `transfer_pocket(target_path, accession=...)` | assigns a binding site to a ligand-free or predicted model by superposing a liganded donor entry, with a calibrated confidence grade. |
+| `get_structure_with_site(query)` | `get_structure()` plus automatic transfer when the selected structure has no bound ligand. |
+| `structure_caveats(result)` | the properties of a result that affect downstream suitability, as reportable statements. |
 
-### Saving a run
+## Run output
 
-- `results_root(root=None)` — resolves this repo's `results/` directory from
-  `$SCIENCE_RESULTS_ROOT` or an explicit `root=`; raises naming the variable
-  when neither is set, rather than silently creating a `results/` folder
-  wherever the kernel session's cwd happens to be. Separate from
-  `out_dir="structures"`, the default on `fetch_pdb`/`fetch_alphafold`/
-  `prep_structure` for standalone use outside a saved run.
-- `get_structure_to_results(query, name=None, root=None,
-  topic="protein_structure", summary=None, with_site=False, ...)` —
-  `get_structure()` (or `get_structure_with_site()` with `with_site=True`),
-  routed into `results/protein_structure/<slug>/` instead of the bare
-  `structures/` default `get_structure` otherwise writes to, then saved as a
-  full run via `gps_write_run`. Returns the usual result dict with a `run`
-  key added.
-- `gps_run_dir(target, root=None, topic="protein_structure")` — the path
-  for one run, `<root>/<topic>/<slug>/`, with `scripts/` created beside it.
-  `root` resolves via `results_root()`.
-- `gps_write_run(out_dir, name, result, summary=None, files=(),
-  data_sources=(), limits=(), scripts=())` — copies the structure file(s)
-  already on disk at `result["path"]`/`result["raw_path"]` into `out_dir`,
-  writes `ranked_structures.csv`, `pocket_residues.csv` (when a pocket was
-  found) and `coverage_gaps.csv` (when computed), the run README, and copies
-  `scripts` into `scripts/`. Returns the paths written. Raises if `result`
-  carries an `error`, before writing anything.
-- `gps_run_readme(name, result, summary, files=(), data_sources=(),
-  limits=(), title=None)` — renders the README text `gps_write_run` saves,
-  per `coding-standards`' Result/Files/Data sources/Limits structure. The
-  Limits section is `structure_caveats(result)` verbatim plus any
-  run-specific ones passed in — reusing the function this skill already
-  computes rather than restating its checks by hand.
-- `gps_write_table(path, rows, headers=None)` — CSV writer used by
-  `gps_write_run`, usable standalone.
+`get_structure_to_results(query)` is the entry point: it runs `get_structure()`
+(or `get_structure_with_site()`) and writes a full run directory rather than the
+bare `structures/` default the fetch functions use. The rest of the group are
+the pieces it calls, exposed for a caller assembling a run by hand.
 
-Runs land in `results/protein_structure/<slug>/`, the topic already used by
-the hand-written WRN and KRAS dossiers, so a new run is a sibling.
-
-## Scope
-
-Structure prediction (`boltz`, `chai1`, `alphafold2`, `openfold3`), docking
-(`diffdock`, `boltz`), and protonation, loop rebuilding or bond-order assignment
-(PDBFixer, Protoss) are out of scope and handled by those tools.
-
-`SKILL.md` is the agent-facing guidance. This file documents the implementation
-for a human reading the code.
+| Function | Description |
+| --- | --- |
+| `get_structure_to_results(query)` | one call from identifier to a written run: structure files, tables, README. |
+| `results_root(root=None)` | resolves the repository `results/` directory from `$SCIENCE_RESULTS_ROOT` or an explicit `root=`; raises rather than defaulting to a cwd-relative path. |
+| `gps_run_dir(target)` | the run directory for one target, `<root>/protein_structure/<slug>/`, with `scripts/` beside it. |
+| `gps_write_run(out_dir, name, result)` | writes the run: structure files, ranked-candidate, pocket and coverage-gap tables, README, and any scripts. |
+| `gps_run_readme(name, result, summary)` | renders the run README alone, with `structure_caveats()` supplying its Limits section. |
+| `gps_write_table(path, rows)` / `gps_check_words(text, cap, label)` | CSV writer, and the word cap enforced on run-README prose. |
 
 ## Layout
 
@@ -91,6 +47,14 @@ for a human reading the code.
 executed into the caller's Python kernel on skill load, so every top-level name
 is exported (the loader rejects underscore-prefixed names, hence `http_get`).
 Requires `gemmi`; all other dependencies are stdlib.
+
+The tables above name the functions a caller invokes. `kernel.py` also defines
+support functions those call — `http_get`, `fetch_pdb`, `summarize_entry`,
+`method_family` / `method_matches`, `classify_ligand`, and the alignment
+helpers `residue_correspondence`, `aa_residues`, `span_residues` and
+`copy_res_probe`. They are exported because the sidecar loader exports every
+top-level name, not because a caller needs them; their docstrings carry the
+constraints that shaped them.
 
 ## Data sources
 
@@ -103,86 +67,47 @@ Requires `gemmi`; all other dependencies are stdlib.
 | RCSB files | coordinates |
 | AlphaFold DB | predicted models, global and per-residue pLDDT |
 
-RCSB metadata is fetched in one batched GraphQL request per 50 entries. Ranking
-60 candidates costs two HTTP calls.
+## Behaviour that affects callers
 
-## Implementation notes
+- Coverage is the fraction of the full UniProt sequence observed, so for a
+  multi-domain target the best-resolved entry usually covers one domain while
+  the full-length entries are low-resolution. Ranking blends resolution with
+  coverage; `min_coverage` makes full-length an explicit request.
+- `prep_structure` silently writes mmCIF when a requested `.pdb` cannot hold the
+  structure — too many chains or atoms, multi-character chain ids, long CCD
+  ligand ids. gemmi does not raise on any of them; it merges chains and
+  overflows serials. The trigger is recorded in `format_coerced_reasons`.
+- A ligand present in several chains of a multimer is several copies.
+  `pocket_residues` and `ligand_box` operate on one copy; pooling them returns a
+  box spanning both sites.
+- Residue coordinates are keyed `(chain, residue)`, since residue numbers are
+  unique only within a chain.
 
-Each condition below yields a valid-looking file rather than an error, so the
-code checks for it explicitly. Removing a check will not cause a test failure.
-
-- **Ranking cannot be driven by coverage alone.** EGFR has 531 chains at
-  coverage 0.28 (kinase domain, to 1.07 A) and 12 at 1.00 (full-length cryo-EM,
-  3.1-3.6 A). The shortlist pre-filter blends resolution with coverage;
-  `min_coverage` makes full-length an explicit request.
-- **Legacy PDB format loses data without raising.** Writing the 89-chain
-  ribosome 4V6X through `make_pdb_string()` yields 53 distinct chain characters
-  and atom serials overflowing to `A2YB1`. `prep_structure` writes mmCIF instead
-  above 62 chains, 99,999 atoms, multi-character chain ids, or a 5-character CCD
-  ligand id (issued since 2023, e.g. `A1BEA`), recording the reason in
-  `format_coerced_reasons`.
-- **A ligand in a multimer is several ligands.** `A1BEA` occupies chains A and B
-  of 9E3S; pooling the copies gives a box spanning both sites.
-  `pocket_residues` and `ligand_box` operate on one copy.
-- **An unresolved loop can line the pocket.** EGFR 8A2A is 1.43 A and ranks
-  second, yet residues 868-875 are unresolved with their flanks 7.5 A from the
-  inhibitor and AlphaFold pLDDT 47 across the gap.
-- **One accession can map to a chain in several segments.** 2RH1 maps as 1-230
-  and 264-365, each with its own offset, with `None` at boundaries whose residue
-  is disordered. Every segment is retained, each residue resolves through the
-  segment containing it, and residues the accession does not claim (168 lysozyme
-  residues) are reported as `n_unmapped_residues`.
-- **Residue numbers are unique only within a chain.** Coordinates are keyed
-  `(chain, residue)`; with no chain requested, the chain of the selected ligand
-  copy is used.
-- **`keep_ions` outranks `keep_ligands=False`.** A catalytic metal is part of the
-  functional state.
-- **SIFTS and RCSB use different method vocabularies.** SIFTS returns
-  `X-ray diffraction` / `Electron Microscopy`; RCSB returns `X-ray` / `EM`.
-  `method_family` normalises both so the `methods=` filter and the scoring
-  bonuses cannot drift apart. An entry with no resolution is scored at a 3.5 A
-  stand-in when it is EM and penalised otherwise, since NMR has no resolution
-  at all and would otherwise crowd out high-resolution X-ray entries.
-- **`prep_structure` validates its selectors.** An out-of-range `model_index` or
-  an absent `chains=` entry raises rather than substituting a different model or
-  chain, and the `hetero_kept` inventory is reconciled after chain filtering so
-  it never lists a ligand absent from the written file.
-- **`fmt` applies to the prepared output, not only the download.** The extension
-  follows the file `fetch_pdb` returned, since RCSB serves no legacy `.pdb` for
-  oversized entries.
+`SKILL.md` carries the per-parameter behaviour: prep options, coverage gaps,
+multimer handling, and when to override the ranking.
 
 ## Pocket transfer confidence
 
 `transfer_pocket` superposes a liganded donor onto a ligand-free target and
-carries the ligand across. Confidence is calibrated on 8 targets (KRAS, EGFR,
-WRN, BRAF, CDK2, HSP90AA1, PARP1, BTK), each transferred onto its AlphaFold
-model from an auto-selected donor and scored against that donor's
-crystallographic site.
-
-| Grade | n | mean recovery | min |
-|---|---|---|---|
-| `high` | 6 | 0.91 | 0.85 |
-| `medium` | 1 | 0.56 | 0.56 |
-| `low` | 1 | 0.00 | 0.00 |
+carries the ligand across. The reported grade was calibrated on eight targets
+(KRAS, EGFR, WRN, BRAF, CDK2, HSP90AA1, PARP1, BTK), each transferred onto its
+AlphaFold model from an auto-selected donor and scored against that donor's
+crystallographic site. **That benchmark ships no script or result table with
+this skill**, so the thresholds below cannot be re-derived as it stands;
+rebuilding it is the prerequisite for changing any of them.
 
 Donor-target correspondence is established by sequence alignment, not residue
 numbers, since author numbering is a deposition choice the two need not share.
-Superposition RMSD and donor identity predict recovery; site pLDDT does not —
-HSP90AA1 records site pLDDT 89.8 with 33.8 A RMSD, 0.502 donor identity and
-0.00 recovery. Identity below 0.8 forces `low`; below 0.5 the transfer is
-refused. pLDDT therefore only
-downgrades a grade. Re-run the benchmark before changing these thresholds.
-
-Above 2.5 A global RMSD the fit is repeated on the 12 A shell around the donor
-ligand, which is the frame the box depends on: WRN's full-length model goes
-16.5 A to 2.05 A, recovery 6/18 to 10/18, recorded in `site_local_fit` and
-`superposed_on`.
+Superposition RMSD and donor sequence identity track recovery, while site pLDDT
+does not — a model can be confident at the site and still transfer badly, which
+is why pLDDT can only downgrade a grade and never raise one. Past a global RMSD
+cut the fit is repeated on the shell around the donor ligand, which is the frame
+the box depends on; `site_local_fit` and `superposed_on` record the result.
 
 Transfer positions a pocket present in the donor and is uninformative about one
-that is not. With no liganded relative (TMEM238) it returns an error. A
-LIGSITE-style geometric detector was evaluated and not adopted: on apo KRAS its
-top-ranked cavity is a 101-residue surface groove with no overlap with the
-switch-II site.
+that is not; with no liganded relative it returns an error. A LIGSITE-style
+geometric detector was evaluated and not adopted, its top-ranked cavity on apo
+KRAS being a surface groove with no overlap with the switch-II site.
 
 ## Heuristics and defaults
 
@@ -193,38 +118,26 @@ switch-II site.
   classified `apo` — correct for inhibitor docking, incorrect if the nucleotide
   is the ligand of interest. Classification affects ranking only.
 - **Ranking weights.** Resolution 40, coverage 30, drug-like ligand +20, -3 per
-  engineered mutation, small bonuses for X-ray and R-free below 0.25. Override
-  with `prefer_ligand`, `min_coverage`, `methods`.
+  engineered mutation to a floor of four, small bonuses for X-ray and R-free
+  below 0.25. An entry with no resolution scores at a 3.5 A stand-in when it is
+  EM and is penalised otherwise, since NMR reports none at all. Override with
+  `prefer_ligand`, `min_coverage`, `methods`.
 - **Preparation is partial by design.** Waters, alt-locs, extra models and
   crystallisation additives are removed; protonation, side-chain and loop
   rebuilding, and bond-order assignment are not performed.
 
-## Worked examples
-
-Reference outputs are in `../../protein_structure/` (KRAS, WRN).
-
-| Target | Result | Exercises |
-|---|---|---|
-| KRAS | 9IAY, 0.95 A, switch-II inhibitor | Clean case, no caveats |
-| EGFR | 8A27, 1.07 A kinase domain | Multi-domain ranking |
-| EGFR 8A2A | 8-residue gap, 7.5 A from ligand | Near-site gap detection |
-| WRN | 10AK, 1.37 A helicase core | Fragmented target, 33 inhibitors |
-| WRN full-length | AF model + site from 10AK, 2.05 A | Site-local fit |
-| TMEM238 | AlphaFold fallback, pLDDT 67 | No structure, no donor |
-| 4V6X | 89 chains preserved as mmCIF | Format ceiling |
-| 2RH1 | 2 segments, 168 unmapped residues | Fusion construct |
-| 1CA2 | Zn retained with `keep_ligands=False` | Ion precedence |
-| HSP90AA1 | donor identity 0.502, RMSD 33.8 A, recovery 0.00 | Confidence calibration |
-
 ## Testing
 
-`tests/` (run with `pytest tests/ -q` from the skill directory) covers the
-pure-logic paths with synthesised structures — chain-keyed ligand-distance
-lookups, `keep_ions` precedence over `keep_ligands=False`, SIFTS multi-segment
-offset resolution, and expression-tag exclusion from `n_missing` — so it needs
-no PDB/AlphaFold network access. The worked-example table above exercises the
-network-dependent behaviours (ranking, format coercion, pocket transfer) that
-the suite can't synthesize; re-run those identifiers after changes to ranking,
-preparation, or residue mapping. Re-run the 8-target benchmark after changing
-`transfer_pocket` scoring and
-confirm recovery still orders `high` > `medium` > `low`.
+Run `pytest tests/ -q` from the skill directory, using an interpreter that has
+`gemmi` — the suite builds its structures with it, and `conftest.py` fails with
+the environment to use when it is absent. Coverage is structure preparation,
+residue mapping and pocket transfer against synthesised structures, so no PDB
+or AlphaFold network access is needed. Ranking, format coercion and donor
+selection depend on live API responses and are not covered; re-run a known
+target end to end after changing them.
+
+## Scope
+
+Structure prediction (`boltz`, `chai1`, `alphafold2`, `openfold3`), docking
+(`diffdock`, `boltz`), and protonation, loop rebuilding or bond-order assignment
+(PDBFixer, Protoss) are out of scope and handled by those tools.

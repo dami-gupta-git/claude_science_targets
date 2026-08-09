@@ -15,12 +15,10 @@ a question about the day or the calendar is answered directly instead.
 
 ## Files
 
-- `SKILL.md` — the whole procedure: gather, sort, write, build, verify, plus the
-  voice and design specifications.
-- `assets/fonts/fraunces-latin-600-normal.woff2` — the one font file the page
-  needs, base64-embedded into an `@font-face` data URI at build time so the
-  headline renders on open with no network call. `Fraunces-OFL.txt` beside it is
-  the font licence.
+| File | Description |
+| --- | --- |
+| `SKILL.md` | the whole procedure: gather, sort, write, build, verify, plus the voice and design specifications. |
+| `assets/fonts/fraunces-latin-600-normal.woff2` | the one font file the page needs, base64-embedded into an `@font-face` data URI at build time so the headline renders on open with no network call. `Fraunces-OFL.txt` beside it is the font licence. |
 
 ## Procedure
 

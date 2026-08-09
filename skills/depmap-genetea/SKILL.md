@@ -235,12 +235,15 @@ cd <skill dir> && PYTHONPATH=. python scripts/gate_codependency.py
 ```
 
 - `calibrate_codependency.py` — the 300-gene random null (writes
-  `codependency_calibration_null.csv`). Slowest of the five.
+  `codependency_calibration_null.csv`). Slowest of the four.
 - `validate_codependency.py` — the 10-query panel (writes
   `codependency_validation.csv`, `codependency_calibration_panel.csv`).
 - `gate_codependency.py` — the gate grid, from the two files above.
 - `background_comparison.py` — corpus vs screened background.
-- `bench_continuous.py TP53` — continuous-mode timings and term correlations.
+
+The continuous-mode figures in `continuous_bench_TP53.json` and
+`continuous_term_correlations_TP53_top300.csv` ship with the skill but have no
+generating script in `scripts/`.
 
 `gate_codependency.py` needs `codependency_calibration_panel.csv` and
 `codependency_calibration_null.csv` present; both ship with the skill, so it

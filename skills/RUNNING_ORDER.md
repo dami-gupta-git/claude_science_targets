@@ -1,9 +1,9 @@
-# Running order for the thirteen skills
+# Running order for the skills
 
 These are Claude Science skills, loaded with `skill("name")` inside a `repl`
 session, not standalone scripts — "running" them means invoking them in one
-conversation in the order below, not thirteen separate CLI calls. They do not
-all belong to one pipeline: there is a target-judgment stack, a separate
+conversation in the order below, not separate CLI calls. They do not all
+belong to one pipeline: there is a target-judgment stack, a separate
 molecule-triage pipeline that consumes the target stack's output, and a set of
 skills that stand alone.
 
@@ -28,8 +28,8 @@ skills that stand alone.
    `depmap-local` and Open Targets directly and produces its own verdict from
    them; `depmap-fusion` is a separate, alternate way of combining the same
    two evidence sources into a fused verdict, not a step the triage skill
-   invokes. Use one or the other, or both, but running `target-triage-public-data`
-   does not run `depmap-fusion` for you.
+   invokes. Use one or the other, or both, but running
+   `target-triage-public-data` does not run `depmap-fusion` for you.
 4. **`marker-contrast-null`** — conditional, not part of the core stack. Run
    only when step 1 or step 3 surfaces a genotype/subgroup-restricted
    dependency claim ("only matters in mutation X") that needs checking against
@@ -39,6 +39,11 @@ skills that stand alone.
    `depmap-fusion`'s; this skill answers a different question — what a gene's
    codependencies are, or what a hit list has in common — run after or
    independent of the target verdict, not as part of reaching it.
+6. **`target-lit-brief`** — recent literature brief for one target. Useful
+   alongside or after the quantitative stack: retrieves and screens recent
+   PubMed papers, summarises them under a target-triage lens, and produces a
+   themed synthesis. Independent of DepMap/Open Targets data; can be run at any
+   point when a literature snapshot is needed.
 
 ## Molecules and structures
 
@@ -64,11 +69,12 @@ Not part of either pipeline above:
 
 ## Summary
 
-Not all thirteen run together in one order. Run the target-judgment stack
+Not all skills run together in one order. Run the target-judgment stack
 (`target-triage-public-data` → `depmap-local` / `opentargets-evidence` →
-`depmap-fusion`, with `marker-contrast-null` and `depmap-genetea` as
-conditional add-ons) to decide whether a gene is worth pursuing. Run
-`get-protein-structure` → `boltz-affinity-triage` afterward, separately, to
-rank molecules against a chosen target. The remaining five skills are
-standalone: loaded individually for their specific purpose, not sequenced
-with the others.
+`depmap-fusion`, with `marker-contrast-null`, `depmap-genetea`, and
+`target-lit-brief` as conditional or complementary add-ons) to decide whether
+a gene is worth pursuing. Run `get-protein-structure` → `boltz-affinity-triage`
+afterward, separately, to rank molecules against a chosen target. The remaining
+skills are standalone: loaded individually for their specific purpose, not
+sequenced with the others.
+```

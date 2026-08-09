@@ -111,6 +111,24 @@ A second run of the same analysis becomes a sibling under the same topic
 (`target_triage/dctpp1/`), so runs stay comparable and the topic folder does not
 accumulate loose files.
 
+**One run is one directory, whatever mix of skills produced it.** Most skills
+here ship a run-output writer — `triage_run_dir`, `mcn_run_dir`,
+`fusion_run_dir`, `gps_run_dir` — and each names its own topic. Those writers
+are for the case where the skill is the analysis. When one skill is loaded
+*inside* another's run, the caller owns the directory: the inner skill's tables
+are written into the caller's `results/<topic>/<run>/` under the run's subject
+prefix, its wiring into that run's `scripts/`, and its conclusion into a section
+of that run's README. A marker-null scan run as part of a CDK12 triage is
+evidence for that triage and belongs in `target_triage/cdk12/`, not in a
+`marker_contrast_null/` sibling the triage README has to cross-reference. The
+test is whether the directory reads on its own: a run folder whose Dependency
+section cites a table stored under another topic is not readable without
+following the link.
+
+The rule has to be stated in the *calling* skill, since that is the one being
+read when the decision is made. A skill that both stands alone and gets invoked
+by others says which case its own writer covers.
+
 Naming follows the two directory trees. Skills are lowercase-with-hyphens,
 because the Agent Skills standard requires the directory name to match the
 `name:` field in `SKILL.md` frontmatter. Result directories are `snake_case`,

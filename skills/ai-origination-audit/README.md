@@ -17,68 +17,19 @@ every audit.
 
 ## Functions
 
-- `search_ctgov(intervention=None, sponsor=None, page_size=100)` — API v2 study
-  records matching an intervention term, a sponsor, or both. Sponsor sweeps
-  surface sibling molecules that an intervention-only search misses.
-- `fetch_ctgov_study(nct_id)` — the full record for one NCT ID. Search results
-  omit endpoints, site counts and results-posting dates, so trial rows are
-  built from full records rather than summaries.
-- `extract_trial_row(study, candidate_id="CAND-001", retrieval_date=None)` —
-  flattens one API v2 record into `TRIAL_COLUMNS`.
-- `scan_registry_for_ai(study, terms=None)` — the AI terms present in a study's
-  title and description modules; defaults to `AI_TERMS`. An empty result across
-  every trial of a program is itself a finding, and is reported as one.
-- `posted_results_summary(study)` — primary and secondary outcome values,
-  LS-mean analyses, participant flow and adverse-event counts; returns `{}`
-  when no results are posted. Used to reconcile registry figures against the
-  publication and the press release.
-- `blank_row(columns, **values)` — a schema-complete row with empty strings for
-  anything unset, for trials in registries other than ClinicalTrials.gov (CDE,
-  ANZCTR, ChiCTR, jRCT, CTIS) or with no locatable registration.
-- `provenance_ref(kind, ident, date=None, extra=None)` — one reference in the
-  audit's fixed format, `kind` being one of `registry`, `pubmed`, `preprint`,
-  `company`, `media`.
-- `audit_summary(evidence_rows, trial_rows)` — tallies evidence grades, source
-  mix and verification coverage, and returns `downgrade_recommended` when the
-  AI-role evidence is press-release-only.
+| Function | Description |
+| --- | --- |
+| `search_ctgov(intervention=None, sponsor=None, page_size=100)` | API v2 study records matching an intervention term, a sponsor, or both. Sponsor sweeps surface sibling molecules that an intervention-only search misses. |
+| `fetch_ctgov_study(nct_id)` | the full record for one NCT ID. Search results omit endpoints, site counts and results-posting dates, so trial rows are built from full records rather than summaries. |
+| `extract_trial_row(study, candidate_id="CAND-001", retrieval_date=None)` | flattens one API v2 record into `TRIAL_COLUMNS`. |
+| `scan_registry_for_ai(study, terms=None)` | the AI terms present in a study's title and description modules; defaults to `AI_TERMS`. An empty result across every trial of a program is itself a finding, and is reported as one. |
+| `posted_results_summary(study)` | primary and secondary outcome values, LS-mean analyses, participant flow and adverse-event counts; returns `{}` when no results are posted. Used to reconcile registry figures against the publication and the press release. |
+| `blank_row(columns, **values)` | a schema-complete row with empty strings for anything unset, for trials in registries other than ClinicalTrials.gov (CDE, ANZCTR, ChiCTR, jRCT, CTIS) or with no locatable registration. |
+| `provenance_ref(kind, ident, date=None, extra=None)` | one reference in the audit's fixed format, `kind` being one of `registry`, `pubmed`, `preprint`, `company`, `media`. |
+| `audit_summary(evidence_rows, trial_rows)` | tallies evidence grades, source mix and verification coverage, and returns `downgrade_recommended` when the AI-role evidence is press-release-only. |
 
 Module constants: `TIER_RUBRIC`, `EVIDENCE_GRADES`, `CLAIM_STEPS`, `AI_TERMS`,
 `CANDIDATE_COLUMNS`, `TRIAL_COLUMNS`, `EVIDENCE_COLUMNS`, `CTGOV_API`.
-
-### Saving a run
-
-- `results_root(root=None)` — resolves this repo's `results/` directory from
-  `$SCIENCE_RESULTS_ROOT` or an explicit `root=`; raises naming the variable
-  when neither is set, rather than silently creating a `results/` folder
-  wherever the kernel session's cwd happens to be.
-- `audit_run_dir(name, root=None, topic="ai_origination_audit")` — the
-  path for one run, `<root>/<topic>/<slug>/`, with `scripts/` created beside
-  it. `name` is the candidate or company audited. `root` resolves via
-  `results_root()`.
-- No test suite shipped with this skill previously; `tests/test_run_output.py`
-  now covers the results-writer (run from the skill directory with
-  `python -m pytest`, no network needed — the ClinicalTrials.gov helpers
-  themselves remain untested, since they need live network access).
-- `audit_write_run(out_dir, name, summary, candidate=None, evidence_rows=(),
-  trial_rows=(), files=(), data_sources=(), limits=(), scripts=())` — writes
-  the three schema-locked tables (`candidate.csv`, `trials.csv`,
-  `evidence.csv`), the run README, and copies `scripts` into `scripts/`.
-  Returns the paths written. Fails before writing anything if `candidate` has
-  no `tier` set.
-- `audit_run_readme(name, summary, candidate=None, evidence_rows=(),
-  trial_rows=(), files=(), data_sources=(), limits=(), title=None)` — renders
-  the README text `audit_write_run` saves, following SKILL.md's own reporting
-  order: tier and qualification first (with the downgrade note when
-  `audit_summary()` recommends it), then the trial picture, then
-  discrepancies and the human-check queue. The Limits section always
-  includes this skill's standing caveats (methods disclosure is not
-  counterfactual evidence, coverage stops at what was actually swept, an
-  empty AI-language scan is not evidence of no AI role, a qualified tier is
-  reported as such) plus any run-specific ones passed in.
-- `audit_human_check_queue(trial_rows, evidence_rows)` — the rows either
-  table marked `needs_verification`, as two lists.
-- `audit_write_table(path, rows, headers=None)` — CSV writer for any of the
-  three schema-locked tables, used by `audit_write_run` but usable standalone.
 
 Runs land in `results/ai_origination_audit/<slug>/`.
 

@@ -11,15 +11,14 @@ live.
 
 ## Functions
 
-All calls run in the `repl` tool only.
+This skill ships no `kernel.py`; every call goes through the clinical-genomics
+connector and runs in the `repl` tool only.
 
-- `host.mcp("clinical-genomics", "open_targets_graphql", query=Q, variables={...})`
-  — arbitrary GraphQL against the Open Targets schema; the entry point for
-  target dossiers, symbol resolution and anything without a wrapper.
-- `host.mcp("clinical-genomics", "open_targets_disease_targets", efo_id=..., size=...)`
-  — ranked targets for a disease id.
-- `host.mcp("clinical-genomics", "open_targets_drug", ...)` — a drug record by
-  ChEMBL id.
+| Function | Description |
+| --- | --- |
+| `host.mcp("clinical-genomics", "open_targets_graphql", query=Q, variables={...})` | arbitrary GraphQL against the Open Targets schema; the entry point for target dossiers, symbol resolution and anything without a wrapper. |
+| `host.mcp("clinical-genomics", "open_targets_disease_targets", efo_id=..., size=...)` | ranked targets for a disease id. |
+| `host.mcp("clinical-genomics", "open_targets_drug", ...)` | a drug record by ChEMBL id. |
 
 ## Queries
 
@@ -33,31 +32,41 @@ host.mcp("clinical-genomics", "open_targets_disease_targets",
 ```
 
 `target(ensemblId:)` needs an ENSG, so resolve the symbol first and take the
-`protein_coding` hit whose `approvedSymbol` matches exactly:
+`protein_coding` hit whose `approvedSymbol` matches exactly. A symbol search
+returns unrelated protein-coding genes alongside the pseudogenes, so matching on
+biotype alone is not enough:
 
 ```python
-host.mcp("clinical-genomics", "open_targets_graphql", query="""
+r = host.mcp("clinical-genomics", "open_targets_graphql", query="""
 query($q:String!){ search(queryString:$q, entityNames:["target"], page:{index:0,size:3}){
   hits{ id object{ ... on Target { approvedSymbol biotype } } } } }""",
   variables={"q":"KRAS"})
-# ENSG00000133703 KRAS protein_coding
-# ENSG00000220635 KRASP1 processed_pseudogene
+r["data"]["search"]["hits"]
+# ENSG00000133703 KRAS      protein_coding        <- exact symbol match
+# ENSG00000220635 KRASP1    processed_pseudogene
+# ENSG00000270170 NCBP2AS2  protein_coding        <- unrelated, also protein_coding
 ```
 
 Tractability and existing drugs:
 
 ```python
-host.mcp("clinical-genomics", "open_targets_graphql", query="""
+r = host.mcp("clinical-genomics", "open_targets_graphql", query="""
 query($id:String!){ target(ensemblId:$id){ approvedSymbol
   tractability{label modality value} drugAndClinicalCandidates{count} } }""",
   variables={"id":"ENSG00000133703"})
-# KRAS modalities: AB, PR, SM | drugs: 3
+t = r["data"]["target"]
+sorted({x["modality"] for x in t["tractability"] if x["value"]})
+# KRAS: AB, PR, SM — most rows in the raw list are false
 ```
 
 ## Schema constraints
 
 Verified against the live API:
 
+- **`open_targets_graphql` returns the raw GraphQL envelope**, so results are
+  under `data` — `r["data"]["target"]`, not `r["target"]`. The
+  `open_targets_disease_targets` wrapper unwraps for you and returns the disease
+  record directly; the two call styles differ on this.
 - `tractability` fields are `label` / `modality` / `value`. There is no `id`.
   Modality codes: `SM` small molecule, `AB` antibody, `PR` PROTAC/degrader,
   `OC` other clinical. Filter on `value == true` — the raw list includes false
@@ -86,7 +95,8 @@ Read `datatypeScores` to see why a target scored as it did.
 ## Rate limits
 
 The connector is shared. Batch fields into one dossier query rather than
-looping — a 30-target sweep at one call each takes ~25 s.
+looping — looping over a sweep of targets issues one HTTP round trip per
+target instead of one batched call.
 
 ## Scope
 

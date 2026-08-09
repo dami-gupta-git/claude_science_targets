@@ -44,20 +44,19 @@ attributable to the session that produced them.
 
 ## Basis for the README rule
 
-Of the 14 editable skills installed when this convention was written, 7 shipped a
-`README.md` and 7 did not. The seven with one were the skills carrying helper
-modules and test suites; the omission fell on skills where a reader most needs to
-know which file does what. Requiring the README at authoring time removes the
-question of whether a given skill happens to have one.
+Skills carrying helper modules and test suites are also the skills where a
+reader most needs to know which file does what; skills without one are the
+ones most likely to leave that question unanswered. Requiring the README at
+authoring time removes the question of whether a given skill happens to have
+one, rather than leaving it to chance which skills do.
 
 ## Basis for the persistence rule
 
-The convention is not stylistic. In the project directory this skill was written
-against, a file census across five completed analyses found 31 CSVs, 10 markdown
-files and 7 figures, against a single `.py` file. Outputs were persisted in every
-case; the code that generated them was retained once. Each of those analyses is
-therefore readable but not re-runnable, and a reported number cannot be traced to
-the operation that produced it.
+The convention is not stylistic. Across completed analyses in this project,
+data and figure outputs are consistently persisted while the code that
+generated them is not. An analysis in that state is readable but not
+re-runnable, and a reported number cannot be traced to the operation that
+produced it.
 
 ## Scope
 

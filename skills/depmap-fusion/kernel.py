@@ -451,3 +451,38 @@ def fusion_write_run(out_dir, subject, rows, summary, disease=None, files=(),
         fh.write(readme)
     written["readme"] = readme_path
     return written
+
+
+def fusion_link_into(canonical_dir, link_path):
+    """Symlink `link_path` to `canonical_dir` so a caller's run directory
+    exposes this skill's output without a second copy of it.
+
+    A fusion run triggered from inside another skill's run (a triage brief,
+    say) still writes to its own canonical `results/depmap_fusion/<slug>/`
+    via `fusion_run_dir`/`fusion_write_run` — never to a path the caller
+    picks — so a later standalone re-run of the same subject lands on the
+    same directory instead of silently diverging from it. This links that
+    canonical directory into the caller's run so it still reads as local
+    structure.
+
+    The link is relative, so it survives the whole `results/` tree being
+    moved or copied together. A no-op if `link_path` already points at
+    `canonical_dir`; replaces a stale symlink pointing elsewhere. Raises if
+    something that is not a symlink already exists at `link_path` —
+    silently overwriting a real file or directory there is not this
+    function's call to make.
+    """
+    canonical_dir = os.path.abspath(canonical_dir)
+    link_path = os.path.abspath(link_path)
+    if os.path.islink(link_path):
+        if os.path.realpath(link_path) == os.path.realpath(canonical_dir):
+            return link_path
+        os.remove(link_path)
+    elif os.path.exists(link_path):
+        raise FileExistsError(
+            f"{link_path} exists and is not a symlink; refusing to overwrite "
+            "it with a link to the canonical fusion run")
+    os.makedirs(os.path.dirname(link_path), exist_ok=True)
+    rel_target = os.path.relpath(canonical_dir, os.path.dirname(link_path))
+    os.symlink(rel_target, link_path, target_is_directory=True)
+    return link_path

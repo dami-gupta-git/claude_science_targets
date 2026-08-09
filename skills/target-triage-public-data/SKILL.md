@@ -71,6 +71,35 @@ the proliferation confounder at step 3, and it has overturned a triage here: USP
 BRCA1-mutant dependency (p = 0.007) ranks 67 of 1,719 markers with zero surviving
 correction, which is where ~68 markers were always going to land.
 
+Its tables still land in `mcn_run_dir`'s canonical `results/marker_contrast_null/<slug>/`
+— never inside the triage's own directory — via `mcn_write_run`, same as a
+standalone marker-null check. Writing it anywhere else risks a second,
+possibly divergent, copy the next time the same contrast is checked outside
+this triage. What belongs in the triage's own directory is a link to it, made
+with `mcn_link_into`, so the evidence still reads as local structure:
+
+```python
+mcn_link_into(mcn_out_dir, os.path.join(out_dir, "marker_null"))
+```
+
+```
+results/target_triage/chek2/marker_null -> ../../marker_contrast_null/chek2_in_..._lines/
+```
+
+The verdict itself — survives / does not survive, and why — goes in one
+section of the triage's own README; only the tables stay out from under it.
+
+`depmap-fusion` outputs follow the same pattern, via `fusion_link_into` into
+the triage's directory, since `fusion_write_run` also has its own canonical
+`results/depmap_fusion/<slug>/`.
+
+`depmap-local` and `opentargets-evidence` have no run-writer of their own —
+nothing else claims to own a `<gene>` directory for their numbers — so their
+outputs are written directly into the triage's run directory under the
+`<gene>_` prefix, as before. Group a loaded skill's several tables into a
+subdirectory when they are read together; leave a single table at the run
+root.
+
 Copy-number markers need the null built from deletions, not mutations: a gene lost
 by deletion is absent from a damaging-mutation matrix entirely. Score the null over
 every gene's deletion call, then read the markers above yours — for MTAP the eleven
@@ -255,12 +284,24 @@ missing = reconcile_fetch(search_pmids, [a["identifiers"]["pmid"] for a in arts]
 
 ## Reporting
 
-Every run writes a `README.md` into its results directory. Build it with
-`write_triage_readme()` rather than by hand, so runs stay comparable:
+**Call `triage_run_dir(gene)` before step 1, not at the end.** It returns
+`results/target_triage/<gene>/` and creates `scripts/` beside it; every table,
+figure and script the run produces is written under that one path, whichever
+skill computed it. Deciding where output goes after the analysis has run is how
+a triage ends up with its CSVs split across the workspace, the repo root and a
+sibling topic directory.
+
+Name files `<gene>_<what>.csv` so a directory listing reads as the run —
+`wrn_dependency_comparators.csv`, `wrn_tractability_opentargets.csv`. Write the
+run's own wiring to `<out_dir>/scripts/` and pass it to `scripts=` below.
+
+The `README.md` goes in the same directory, via `triage_write_run()` rather
+than `write_triage_readme()` called by hand with a hand-built path:
 
 ```python
-write_triage_readme(
-    f"{out_dir}/README.md", gene="WRN",
+out_dir = triage_run_dir("WRN")
+triage_write_run(
+    out_dir, gene="WRN",
     summary="Plain prose a non-specialist can follow. No statistics, no bullets.",
     steps=[
         {"name": "Dependency", "finding": "...", "table": strata_df},
@@ -271,6 +312,17 @@ write_triage_readme(
     files=[("wrn_triage.png", "the figure")],
     data_sources=["DepMap 24Q2 CRISPRGeneEffect.csv"],
     limits=["Knockout is not pharmacological inhibition."])
+```
+
+`triage_run_dir` needs `$SCIENCE_RESULTS_ROOT` set to this repo's `results/`
+directory (or an explicit `root=`) — it raises naming the variable rather
+than silently creating a `results/` folder wherever the session's cwd
+happens to be. A Claude Science kernel does not read the repo's `.env`, so
+set it in the session before the first call:
+
+```python
+import os
+os.environ["SCIENCE_RESULTS_ROOT"] = "/path/to/claude_science_targets/results"
 ```
 
 The opening `summary` is the part a non-specialist reads: one plain paragraph,

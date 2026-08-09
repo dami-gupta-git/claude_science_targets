@@ -5,7 +5,7 @@ are actually about that gene, and turns them into a per-paper table and a
 triage-oriented synthesis.
 
 Three properties of the PubMed connector shape this module, all measured
-rather than assumed (see README ## Calibration):
+rather than assumed against the live connector:
 
 - ``search_articles`` accepts at most 200 ids per call and
   ``get_article_metadata`` silently truncates to the first 20 -- it returns
@@ -46,9 +46,9 @@ METADATA_CHUNK = 20
 # The pool stays at 200 regardless of how few papers are asked for, because the
 # connector's ordering is unreliable across the whole result set rather than
 # just its tail: the first 100 of 200 held only 96-97 of the genuinely most
-# recent 100 (README ## Calibration). Searching and fetching metadata for the
-# full pool costs no LLM calls; the per-paper cost is screening, which
-# screen_relevance stops early instead.
+# recent 100. Searching and fetching metadata for the full pool costs no LLM
+# calls; the per-paper cost is screening, which screen_relevance stops early
+# instead.
 DEFAULT_OVERFETCH = 200
 DEFAULT_N_PAPERS = 5
 

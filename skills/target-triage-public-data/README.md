@@ -12,49 +12,47 @@ functions that loads into the Python kernel alongside it.
 
 ## Functions
 
-- `ot_target(ensembl_id)` — Open Targets tractability and DepMap essentiality
-  for one Ensembl gene id, in a single GraphQL call.
-- `ot_essentiality_frame(target_dict)` — flattens that response into a tidy
-  DataFrame of gene, tissue, cell line, disease, gene effect and expression.
-- `partial_corr(x, y, z)` — Pearson correlation of x and y after linearly
-  removing z from both. The p-value uses n−3 degrees of freedom, since fitting z
-  out of each variable consumes a parameter. Raises on a constant z, on
-  non-finite input, and below n = 4.
-- `confounder_check(df, expr_col, drug_cols)` — tests whether expression
-  correlates with sensitivity across the entire drug panel. Returns `r`, `p`,
-  `n`, `n_drugs` and `n_drugs_min`, the last being the thinnest drug coverage
-  behind any surviving row.
-- `sensitivity_scan(df, expr_col, drug_cols)` — per-drug raw and partial
-  correlations against one expression column, Benjamini-Hochberg corrected.
-  Columns are `SCAN_COLUMNS` whether or not any drug survived, so a scan in
-  which every drug fell below `min_n` still exposes `r_partial` and
-  `q_partial_BH` as empty columns. Drugs that could not be tested are listed in
-  `.attrs["dropped"]` with their n and the reason, and summarised on stdout.
-- `classify_gene_effect(effect)` — labels a Chronos gene effect `essential`,
-  `intermediate`, `dispensable` or `unknown` against
-  `DEPMAP_ESSENTIAL_THRESHOLD`.
-- `load_prism(matrix_path, compound_list_path)` — PRISM primary matrix as a cell
-  line by drug frame keyed by drug name rather than BRD id.
-- `load_prism_secondary(path)` — PRISM 20Q2 dose-response AUC, indexed by
-  ModelID.
-- `prism_secondary_has(path, drug_names)` — which of the named compounds were
-  carried into the dose-response screen.
-- `normalize_cell_name(s)` — strips case and punctuation so GDSC and CCLE line
-  names join.
-- `reconcile_fetch(expected_ids, fetched_ids)` — asserts a batched fetch
-  returned every id the search promised, and returns the missing ids.
-- `triage_readme(gene, summary, steps, files, data_sources, limits)` — renders a
-  run README as markdown: an opening plain-prose paragraph, one section per
-  triage step with an optional table, then Files, Data sources and Limits.
-- `write_triage_readme(path, ...)` — the same, written to `path`.
-- `markdown_table(rows, headers=None)` — a list of dicts or a DataFrame as a
-  markdown table; p-value and q-value columns are formatted, missing values
-  render as `—`.
-- `is_pvalue_key(key)` — whether a column name holds a p-value or an
-  FDR-adjusted q-value, matching `p` or `q` as a whole underscore-separated
-  component so that `q_partial_BH` is caught and `quantile` is not.
-- `format_p(p)` — renders a p-value for prose, in scientific notation below
-  0.001 and as a bound when it has underflowed to zero.
+| Function | Description |
+| --- | --- |
+| `ot_target(ensembl_id)` | Open Targets tractability and DepMap essentiality for one Ensembl gene id, in a single GraphQL call. |
+| `ot_essentiality_frame(target_dict)` | flattens that response into a tidy DataFrame of gene, tissue, cell line, disease, gene effect and expression. |
+| `partial_corr(x, y, z)` | Pearson correlation of x and y after linearly removing z from both. The p-value uses n−3 degrees of freedom, since fitting z out of each variable consumes a parameter. Raises on a constant z, on non-finite input, and below n = 4. |
+| `confounder_check(df, expr_col, drug_cols)` | tests whether expression correlates with sensitivity across the entire drug panel. Returns `r`, `p`, `n`, `n_drugs` and `n_drugs_min`, the last being the thinnest drug coverage behind any surviving row. |
+| `sensitivity_scan(df, expr_col, drug_cols)` | per-drug raw and partial correlations against one expression column, Benjamini-Hochberg corrected. Columns are `SCAN_COLUMNS` whether or not any drug survived, so a scan in which every drug fell below `min_n` still exposes `r_partial` and `q_partial_BH` as empty columns. Drugs that could not be tested are listed in `.attrs["dropped"]` with their n and the reason, and summarised on stdout. |
+| `classify_gene_effect(effect)` | labels a Chronos gene effect `essential`, `intermediate`, `dispensable` or `unknown` against `DEPMAP_ESSENTIAL_THRESHOLD`. |
+| `load_prism(matrix_path, compound_list_path)` | PRISM primary matrix as a cell line by drug frame keyed by drug name rather than BRD id. |
+| `load_prism_secondary(path)` | PRISM 20Q2 dose-response AUC, indexed by ModelID. |
+| `prism_secondary_has(path, drug_names)` | which of the named compounds were carried into the dose-response screen. |
+| `normalize_cell_name(s)` | strips case and punctuation so GDSC and CCLE line names join. |
+| `reconcile_fetch(expected_ids, fetched_ids)` | asserts a batched fetch returned every id the search promised, and returns the missing ids. |
+| `triage_readme(gene, summary, steps, files, data_sources, limits)` | renders a run README as markdown: an opening plain-prose paragraph, one section per triage step with an optional table, then Files, Data sources and Limits. |
+| `write_triage_readme(path, ...)` | the same, written to `path`. |
+| `markdown_table(rows, headers=None)` | a list of dicts or a DataFrame as a markdown table; p-value and q-value columns are formatted, missing values render as `—`. |
+| `is_pvalue_key(key)` | whether a column name holds a p-value or an FDR-adjusted q-value, matching `p` or `q` as a whole underscore-separated component so that `q_partial_BH` is caught and `quantile` is not. |
+| `format_p(p)` | renders a p-value for prose, in scientific notation below 0.001 and as a bound when it has underflowed to zero. |
+
+## Where a run is written
+
+A triage writes one directory, `results/target_triage/<gene>/`, holding every
+table and figure the run produced under a `<gene>_` prefix, its wiring in
+`scripts/`, and a `README.md`. `depmap-local` and `opentargets-evidence` have
+no run-writer of their own, so their outputs are part of this run and are
+written directly here.
+
+`marker-contrast-null` and `depmap-fusion` each have their own canonical
+output directory (`results/marker_contrast_null/<slug>/`,
+`results/depmap_fusion/<slug>/`) that they always write to, standalone or not
+— so a re-run of the same contrast or subject outside this triage lands on
+the same files instead of a second, divergent copy. The triage links to those
+directories with `mcn_link_into`/`fusion_link_into` rather than duplicating
+their tables: `results/target_triage/chek2/marker_null` is a symlink, not a
+copy.
+
+| Function | Description |
+| --- | --- |
+| `results_root(root=None)` | resolves this repo's `results/` directory from `$SCIENCE_RESULTS_ROOT` or an explicit `root=`; raises naming the variable when neither is set, rather than silently creating a `results/` folder wherever the kernel session's cwd happens to be. A Claude Science kernel does not read the repo's `.env`, so the variable is set in the session. |
+| `triage_run_dir(gene, root=None, topic=None)` | the path for one triage run, `<root>/<topic>/<slug>/`, with `scripts/` created beside it. Called before the analysis, so every step writes to a path that already exists. |
+| `triage_write_run(out_dir, gene, summary, steps, files=(), data_sources=(), limits=(), title=None, scripts=())` | wraps `write_triage_readme` rather than replacing it: writes `README.md` into `out_dir` and copies `scripts` into `scripts/`. Returns the paths written. |
 
 ## Thresholds
 
@@ -72,74 +70,59 @@ alongside.
 are excluded from the returned rows and recorded in `.attrs["dropped"]`.
 
 `SUMMARY_MAX_WORDS = 130` and `FINDING_MAX_WORDS = 90` cap the run README's
-opening paragraph and each step finding. These are editorial rather than derived:
-they were set from the shortest run README in `results/target_triage` that a
-non-specialist could still follow, and they exist so a run README stays an
-orientation document rather than becoming a second copy of the analysis. Re-derive
-by writing a README a general reader can follow without the CSVs and counting its
-words; raise the constants in `kernel.py` rather than splitting text across fields
-to evade them.
+opening paragraph and each step finding, enforced by `check_words`. They are
+editorial rather than derived, and exist so a run README stays an orientation
+document rather than a second copy of the analysis. Raise them in `kernel.py`
+rather than splitting text across fields to evade them.
 
 ## Error paths
 
 The helpers raise rather than returning a degraded number, because every one of
 these inputs otherwise yields a value indistinguishable from a valid result:
 
-- `partial_corr` raises on a constant confound. With a rank-deficient fit the
-  residuals are the original variables, so the return value would be the
-  uncontrolled Pearson correlation presented as a controlled one.
-- `partial_corr` raises on non-finite input rather than returning `(nan, nan)`,
-  and below n = 4, where no residual degrees of freedom remain.
+- `partial_corr` raises on a constant confound, where a rank-deficient fit
+  leaves the residuals equal to the original variables and the return value
+  would be an uncontrolled correlation presented as a controlled one. It also
+  raises on non-finite input rather than returning `(nan, nan)`, and below
+  n = 4.
 - `sensitivity_scan` raises when built with a single drug column and no
-  externally supplied `panel_mean_col`. The whole-panel mean of one column IS
-  that column, so the confound would equal the drug being tested: `partial_corr`
-  would then regress the drug on itself and correlate expression against the
-  ~1e-16 floating-point residual of that perfect self-fit — a fabricated
-  `r_partial` indistinguishable from a legitimate null result, rather than the
-  "nothing to control for" error it actually is. Pass `panel_mean_col=` from a
-  wider panel, or use `confounder_check` for a single-drug question.
-- `sensitivity_scan` and `confounder_check` raise when a caller's frame already
-  holds `_panel_mean` or `_panel_mean_loo`, which the panel-mean computation
-  would otherwise overwrite, and on drug or expression columns absent from the
-  frame.
-- `load_prism` raises on duplicate cell-line ids in the matrix header, which
-  produce a duplicated index that multiplies rows on any later merge, and on a
-  data row whose length disagrees with the header, which indicates a truncated
-  download.
+  externally supplied `panel_mean_col`, since the panel mean of one column is
+  that column: the drug would be regressed on itself and expression correlated
+  against the floating-point residual, fabricating an `r_partial`
+  indistinguishable from a legitimate null. Pass `panel_mean_col=` from a wider
+  panel, or use `confounder_check` for a single-drug question.
+- `sensitivity_scan` and `confounder_check` raise on absent drug or expression
+  columns, and when the frame already holds the internal `_panel_mean` columns
+  the computation would overwrite.
+- `load_prism` raises on duplicate cell-line ids, which multiply rows on any
+  later merge, and on a row whose length disagrees with the header, which
+  indicates a truncated download.
 - `ot_target` raises on a GraphQL `errors` payload and on a null target, both of
   which arrive with HTTP 200 for an unrecognised Ensembl id.
 
 ## Analysis constraints
 
 - **The panel-mean confound is leave-one-out.** Each drug is excluded from the
-  panel mean used as its own confound; including it regresses part of the
-  drug's signal out of itself and attenuates `r_partial` toward zero by
-  roughly `1/len(drug_cols)` (~46% on a 3-drug panel, ~10% at 25, ~3% at
-  100). The bias is conservative and cannot manufacture a hit, but it can
-  hide a borderline one. `confounder_check` is unaffected: there the panel
-  mean is the quantity under test, not a confound.
+  panel mean used as its own confound; including it regresses part of the drug's
+  signal out of itself and attenuates `r_partial` toward zero, severely on a
+  narrow panel and negligibly on a wide one. The bias is conservative and cannot
+  manufacture a hit, but it can hide a borderline one. `confounder_check` is
+  unaffected: there the panel mean is the quantity under test, not a confound.
 
 **Proliferation confounding.** Genes that track proliferation rate correlate
 with sensitivity to every cytotoxic drug, so per-drug correlations look specific
-when they are not. Measured on DCTPP1 in colorectal lines, **GDSC** (40 COREAD
-lines, lnIC50) gave a raw 5-FU correlation of r = −0.27, a panel-wide
-r = −0.41 (p = 0.009), and a 5-FU association of r = +0.04 (p = 0.80) after partialling out each
-line's mean response across all drugs. The independent **PRISM** panel (33 bowel
-lines, single-dose log-fold-change) gave raw r = −0.08 and partial
-r = +0.09 (p = 0.61) for the same drug — the same qualitative conclusion at
-different numbers, because the two screens differ in cell lines, readout and n.
-Both figures are from `dctpp1_drug_sensitivity_correlations.csv`;
-`dctpp1_drug_sensitivity_all_screens.csv` reports the PRISM row separately per
-release (23Q2 and 24Q2) and differs in the third decimal, while the GDSC row is
-identical across both files.
-Correlations from different panels are not interchangeable, so every reported
-number should name the screen it came from. `confounder_check` and
-`sensitivity_scan` make the partial correlation the default path.
+when they are not. On the worked DCTPP1 case a nominally significant raw
+correlation with 5-FU disappears once each line's mean response across the whole
+panel is partialled out, and an independent PRISM panel reproduces that
+conclusion at different numbers, the two screens differing in cell lines,
+readout and n. Correlations from different panels are not interchangeable, so
+every reported number should name the screen it came from. `confounder_check`
+and `sensitivity_scan` make the partial correlation the default path.
 
 **PRISM product selection.** DepMap ships three repurposing datasets whose
 version numbers do not order them by content: `Repurposing_Public_23Q2`/`24Q2`
-are single-dose (~2.5 uM) primary screens, while the 8-point dose-response data
-with fitted AUC/IC50 sits on the older `19Q4`/`20Q2` release page. Only
+are single-dose primary screens, while the 8-point dose-response data with
+fitted AUC/IC50 sits on the older `19Q4`/`20Q2` release page. Only
 primary-screen hits were carried into the dose-response screen, so membership
 must be checked before promising the analysis (`prism_secondary_has`). AUC
 polarity is inverted relative to the primary screen's log-fold-change: higher
@@ -184,27 +167,10 @@ is needed for the survival step and is imported only where used.
 ## Tests
 
 `python -m pytest` from the skill directory; requires pytest, numpy, pandas,
-scipy and statsmodels. `pytest.ini` pins rootdir here so pytest does not walk up
-to an unrelated config, and `conftest.py` fails with an actionable message when
-scipy or statsmodels is missing. All inputs are synthesised, so no DepMap
-release, GDSC download, network access or credentials are needed.
-
-83 tests across five modules. `test_readme.py` covers the run-README generator:
-that the opening paragraph precedes every heading and number, that a skipped step
-is reported rather than omitted, that the word caps hold at the boundary, that
-a p-value which underflowed to zero renders as a bound, and that the file is
-written as UTF-8 with the platform default substituted for ASCII, since the
-generator emits `×` and superscript digits on every run that produces a p below
-0.001. `test_partial_corr.py` checks the partial
-correlation coefficient against the closed-form first-order identity computed
-from independent `pearsonr` calls, so the test cannot pass merely by agreeing
-with the implementation's residual-regression route. `test_guards.py` checks the
-p-value against the t-distribution at n−3 degrees of freedom, and asserts it
-exceeds the value `pearsonr` would report on the residuals — the direction that
-fails if the n−2 form is ever restored. It also asserts that an all-dropped scan
-and a populated one carry identical columns, the two frames being built on
-different code paths. Each guard was mutation-checked by
-reverting it and confirming the intended test, and only that test, fails.
+scipy and statsmodels. All inputs are synthesised, so no DepMap release, GDSC
+download, network access or credentials are needed. The suite covers the
+run-README generator, the partial-correlation statistic, and the
+degrees-of-freedom and column-consistency guards.
 
 ## Scope
 

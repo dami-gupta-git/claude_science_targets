@@ -1,4 +1,8 @@
 """Helpers for public-data target triage. See SKILL.md."""
+import os
+import re
+import shutil
+
 import numpy as np
 import pandas as pd
 
@@ -577,3 +581,90 @@ def write_triage_readme(path, gene, summary, steps, files, data_sources, limits,
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
     return text
+
+
+# --------------------------------------------------------------------------
+# Run output: results/<topic>/<run>/
+# --------------------------------------------------------------------------
+RESULTS_TOPIC = "target_triage"
+
+
+def results_root(root=None):
+    """Resolve this repo's results/ directory. Requires $SCIENCE_RESULTS_ROOT or root=.
+
+    No cwd-relative default (a bare "results" silently resolves against
+    whatever directory the kernel session happens to be running in, which is
+    not reliably this repo's checkout) and no isdir check (a results root is
+    written to, not read from, so it may not exist yet on a first run — the
+    topic/run makedirs call creates it). Matches `results_root()` in
+    target-lit-brief and ai-origination-audit, which fixed the same
+    cwd-relative-default defect this skill previously had no guard against —
+    `write_triage_readme()` took a bare `path` with nothing computing it.
+    """
+    if root is None:
+        root = os.environ.get("SCIENCE_RESULTS_ROOT")
+    if root is None:
+        raise FileNotFoundError(
+            "No results root configured. Set $SCIENCE_RESULTS_ROOT to this "
+            "repo's results/ directory, or pass root= explicitly.")
+    return root
+
+
+def triage_run_dir(gene, root=None, topic=None, make=True):
+    """Path for one triage run: <root>/<topic>/<slug>/, with scripts/ beside it.
+
+    `gene` is the symbol triaged; slugged to snake_case because result
+    directories are named that way and a raw symbol may carry case (the
+    existing runs use lowercase, e.g. `results/target_triage/wrn/`).
+
+    `root` resolves via `results_root()` — $SCIENCE_RESULTS_ROOT or an
+    explicit `root=` — before anything is created, so a misconfigured or
+    unset root raises here rather than silently creating a `results/`
+    directory wherever the session's cwd happens to be.
+
+    `topic` defaults to RESULTS_TOPIC through an explicit None check rather
+    than in the signature: the kernel.py sidecar loader rejects a non-literal
+    default, and a rejected file defines none of this module's helpers.
+    """
+    root = results_root(root)
+    topic = RESULTS_TOPIC if topic is None else topic
+    slug = re.sub(r"[^a-z0-9]+", "_", str(gene).strip().lower()).strip("_")
+    if not slug:
+        raise ValueError("triage_run_dir got an empty gene; the run "
+                         "directory is named after the gene triaged")
+    out_dir = os.path.join(root, topic, slug)
+    if make:
+        os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    return out_dir
+
+
+def triage_write_run(out_dir, gene, summary, steps, files=(), data_sources=(),
+                     limits=(), title=None, scripts=()):
+    """Write one triage run directory. Returns {name: path} for what was written.
+
+    Wraps `write_triage_readme` — writes `README.md` into `out_dir` and
+    copies `scripts` into `scripts/`. Does not change what the writer
+    produces; only computes where it writes.
+
+    A script already sitting in `<out_dir>/scripts/` is reported without being
+    copied. Writing the wiring straight to its destination is the normal path,
+    and `shutil.copyfile` raises `SameFileError` on a same-path copy — which
+    would fail the whole run after the analysis had completed, for a file that
+    is already where it belongs.
+    """
+    scripts_dir = os.path.join(out_dir, "scripts")
+    os.makedirs(scripts_dir, exist_ok=True)
+    written = {}
+
+    readme_path = os.path.join(out_dir, "README.md")
+    write_triage_readme(readme_path, gene, summary, steps, files,
+                        data_sources, limits, title=title)
+    written["readme"] = readme_path
+
+    for src in scripts:
+        dst = os.path.join(scripts_dir, os.path.basename(src))
+        if not (os.path.exists(dst) and os.path.samefile(src, dst)):
+            shutil.copyfile(src, dst)
+        written.setdefault("scripts", []).append(dst)
+
+    return written

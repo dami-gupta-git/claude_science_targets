@@ -7,8 +7,8 @@ import os
 
 import pytest
 
-from kernel import (fusion_run_dir, fusion_run_readme, fusion_verdict_mix,
-                    fusion_write_run, results_root)
+from kernel import (fusion_link_into, fusion_run_dir, fusion_run_readme,
+                    fusion_verdict_mix, fusion_write_run, results_root)
 
 
 def test_results_root_raises_when_unconfigured(monkeypatch, tmp_path):
@@ -106,3 +106,43 @@ def test_run_readme_enforces_summary_word_cap():
     with pytest.raises(ValueError):
         fusion_run_readme("TP53", [row("TP53", "growth-suppressive-mismatch")],
                           summary=" ".join(["word"] * 200))
+
+
+def test_link_into_creates_relative_symlink_to_canonical_dir(tmp_path):
+    canonical = tmp_path / "results" / "depmap_fusion" / "egfr"
+    canonical.mkdir(parents=True)
+    link_path = tmp_path / "results" / "target_triage" / "egfr" / "fusion"
+    fusion_link_into(str(canonical), str(link_path))
+    assert os.path.islink(str(link_path))
+    assert os.path.realpath(str(link_path)) == os.path.realpath(str(canonical))
+    assert not os.path.isabs(os.readlink(str(link_path)))
+
+
+def test_link_into_is_a_noop_when_already_linked(tmp_path):
+    canonical = tmp_path / "canonical"
+    canonical.mkdir()
+    link_path = tmp_path / "caller" / "fusion"
+    fusion_link_into(str(canonical), str(link_path))
+    target_before = os.readlink(str(link_path))
+    fusion_link_into(str(canonical), str(link_path))
+    assert os.readlink(str(link_path)) == target_before
+
+
+def test_link_into_replaces_a_stale_link(tmp_path):
+    old_canonical = tmp_path / "old"
+    old_canonical.mkdir()
+    new_canonical = tmp_path / "new"
+    new_canonical.mkdir()
+    link_path = tmp_path / "caller" / "fusion"
+    fusion_link_into(str(old_canonical), str(link_path))
+    fusion_link_into(str(new_canonical), str(link_path))
+    assert os.path.realpath(str(link_path)) == os.path.realpath(str(new_canonical))
+
+
+def test_link_into_refuses_to_overwrite_a_real_directory(tmp_path):
+    canonical = tmp_path / "canonical"
+    canonical.mkdir()
+    link_path = tmp_path / "caller" / "fusion"
+    link_path.mkdir(parents=True)
+    with pytest.raises(FileExistsError):
+        fusion_link_into(str(canonical), str(link_path))

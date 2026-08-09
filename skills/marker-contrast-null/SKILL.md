@@ -85,12 +85,13 @@ over a scan the marker is absent from would be meaningless.
 
 ## Saving a run
 
-A standalone check (not run as part of another skill's triage) writes its
-scan, its specificity table if run, and a README stating plainly whether the
-marker survives the controls, via `mcn_write_run` — not assembled by hand.
-`mcn_run_dir` needs `$SCIENCE_RESULTS_ROOT` set to this repo's `results/`
-directory, or an explicit `root=` — it raises naming the variable rather than
-silently creating a `results/` folder wherever the session's cwd happens to be:
+Every check — standalone or triggered from inside another skill's run —
+writes its scan, its specificity table if run, and a README stating plainly
+whether the marker survives the controls, via `mcn_write_run`, into the one
+canonical location for that contrast. `mcn_run_dir` needs
+`$SCIENCE_RESULTS_ROOT` set to this repo's `results/` directory, or an
+explicit `root=` — it raises naming the variable rather than silently
+creating a `results/` folder wherever the session's cwd happens to be:
 
 ```python
 out_dir = mcn_run_dir("USP1 in BRCA1-mutant lines")
@@ -101,10 +102,22 @@ mcn_write_run(out_dir, "USP1 in BRCA1-mutant lines",
               summary="...", data_sources=["DepMap 24Q2"])
 ```
 
-Lands in `results/marker_contrast_null/<slug>/`. When this skill runs inside
-another skill's triage instead, that run's own `results/<topic>/<run>/scripts/`
-is still the right home for the wiring, per `coding-standards` — this writer is
-for the standalone case.
+Lands in `results/marker_contrast_null/<slug>/`, every time, regardless of
+caller — so a later standalone re-run of the same contrast finds the same
+directory rather than producing a second, possibly divergent, copy of it.
+
+When this skill runs inside another skill's run — a triage, a fusion, a
+brief — that run does not get its own copy of the tables. It links to the
+canonical directory instead, with `mcn_link_into`:
+
+```python
+mcn_link_into(out_dir, os.path.join(triage_out_dir, "marker_null"))
+```
+
+`triage_out_dir/marker_null` becomes a relative symlink to
+`out_dir` (`results/marker_contrast_null/<slug>/`). The wiring goes in the
+triage's own `scripts/` and the verdict into one section of its README, same
+as before; only the tables themselves stop being duplicated.
 
 ## Calibration
 

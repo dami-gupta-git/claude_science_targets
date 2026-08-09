@@ -15,25 +15,29 @@ or pass `root=` to any helper - `depmap_root()` raises, naming the variable,
 when neither is set. Call `depmap_inventory()` first - it lists present files
 and whether the cache is built.
 
-| File | Shape | Notes |
-|---|---|---|
-| `CRISPRGeneEffect.csv` | 1208 lines x 18531 genes | Chronos score. **0 = no effect, -1 ~ median common essential** |
-| `CRISPRGeneDependency.csv` | same | probability of dependency (0-1) |
-| `Model.csv` | 2154 lines x 49 | `OncotreeLineage`, `OncotreePrimaryDisease`; index `ModelID` (`ACH-######`) |
-| `OmicsSomaticMutationsMatrixHotspot.csv` | 1968 x 553 | hotspot counts; **filter `IsDefaultEntryForModel=="Yes"`** |
-| `OmicsFusionFiltered.csv` | 79030 calls / 1719 models | filter `IsDefaultEntryForModel=="Yes"` |
-| `CRISPRInferredCommonEssentials.csv` | 1827 genes | DepMap's own call - see caveat below |
-| `Repurposing_Public_<REL>_*` | 24Q2: 6790 x 919; 23Q2: 6658 x 919 | PRISM primary screen, **single-dose** LFC at 2.5 uM |
-| `prism-repurposing-20q2-secondary-screen-dose-response-curve-parameters.csv` | 1489 compounds x ~500 lines | **8-point dose-response**: fitted `auc`/`ic50`/`ec50`. Higher AUC = MORE resistant |
+`depmap_inventory()` reports the shape of every file present; read current
+dimensions from it rather than from this table.
 
-Only 1208 of 2154 models have CRISPR data - always report the joined n.
+| File | Contents |
+|---|---|
+| `CRISPRGeneEffect.csv` | Chronos score per line x gene. **0 = no effect, -1 ~ median common essential** |
+| `CRISPRGeneDependency.csv` | the same matrix as probability of dependency (0-1) |
+| `Model.csv` | cell-line metadata: `OncotreeLineage`, `OncotreePrimaryDisease`; index `ModelID` (`ACH-######`) |
+| `OmicsSomaticMutationsMatrixHotspot.csv` | hotspot counts; **filter `IsDefaultEntryForModel=="Yes"`** |
+| `OmicsFusionFiltered.csv` | fusion calls; filter `IsDefaultEntryForModel=="Yes"` |
+| `CRISPRInferredCommonEssentials.csv` | DepMap's own essential call - see caveat below |
+| `Repurposing_Public_<REL>_*` | PRISM primary screen, **single-dose** LFC at 2.5 uM |
+| `prism-repurposing-20q2-secondary-screen-dose-response-curve-parameters.csv` | **8-point dose-response**: fitted `auc`/`ic50`/`ec50`. Higher AUC = MORE resistant |
 
-## Build the cache first (one-off, ~15 s)
+Only about half the models in `Model.csv` have CRISPR data - always report the
+joined n.
 
-The wide CSVs cost ~1 s per gene per query. `build_depmap_cache()` writes
-column-addressable parquet to `_cache/`, taking a single-gene read to ~0.2 s
-(5x) and 8 genes to ~0.17 s. Requires `pyarrow`. Values are float32 - agreement
-with the CSV is to ~1e-7, which is far below any biologically meaningful
+## Build the cache first
+
+The wide CSVs cost roughly a second per gene per query. `build_depmap_cache()`
+writes column-addressable parquet to `_cache/`, which cuts a single-gene read by
+several fold and amortises further across multiple genes. Requires `pyarrow`.
+Values are float32, so cache and CSV agree far below any biologically meaningful
 difference, but do not use the cache for exact bit-reproduction.
 
 ## Wide-matrix reads go through one contract
@@ -68,26 +72,30 @@ error). Add new matrices to `MATRIX_SPECS` rather than writing a fourth reader.
 
 - `< -1.0` strong dependency; `< -0.5` the conventional dependent cut (`DEP_THRESHOLD`).
 - `frac_dependent >= 0.90` -> common essential: usually a poor therapeutic window.
-- **Positive effect means knockout HELPS growth** - typical of tumour suppressors
-  (TP53 mean +0.42). Never read a positive score as a weak dependency.
+- **Positive effect means knockout HELPS growth** - typical of tumour
+  suppressors such as TP53. Never read a positive score as a weak dependency.
 - A flat, low-variance profile near zero *may* mean the panel lacks the relevant
-  context - but check with `depmap_fusion_contrast()` before assuming so. For ALK
-  the panel does contain 19 canonical-fusion lines with CRISPR data and they are
-  **still not dependent** (mean -0.16, p = 0.69); ROS1 likewise (n=6, p = 0.97).
-  RET is genuinely untestable (n=1).
+  context - but check with `depmap_fusion_contrast()` before assuming so. The
+  panel holds enough canonical-fusion lines to test ALK and ROS1, and both are
+  **still not dependent**; RET has too few to test at all, which the contrast
+  reports as `untestable` rather than as a negative.
 
 ## Validated behaviour
 
-Reproduced on this release, and worth re-running after any change:
+These reproduce on this release and are worth re-running after any change. Run
+each call for its current values.
 
-- Pan-essentials RAN/RPL23/PSMA1 -> 100% of lines dependent (RAN mean -4.055).
-- Olfactory controls OR5A1/CSN1S1 -> ~1% dependent.
-- **WRN in MSI lines** (Chan 2019): 52% vs 4% dependent, p = 2e-12.
-- **KRAS by lineage** (effect size): pancreas -2.14, bowel -1.43, biliary -1.00,
-  lung -0.88. Ranked by BH-adjusted p the order differs - lung precedes biliary
-  (126 lines vs 34), so report effect size and significance separately.
-- **KRAS-hotspot-mutant vs WT KRAS dependency**: -1.92 vs -0.52, d = -3.3.
-- Negative control TP53-hotspot vs KRAS dependency: d = -0.14, p = 0.45.
+- Pan-essentials RAN/RPL23/PSMA1 are dependent in every line; olfactory controls
+  OR5A1/CSN1S1 in almost none. Together they bracket the usable range of
+  `depmap_selectivity()`.
+- **WRN in MSI lines** (Chan 2019): MSI-high lines are dependent, MSS lines are
+  not - `depmap_msi_contrast("WRN")`.
+- **KRAS by lineage**: pancreas carries the largest effect, then bowel, biliary
+  and lung. Ranked by BH-adjusted p the order differs, because lung contributes
+  several times as many lines as biliary and a smaller effect clears
+  significance more easily - report effect size and significance separately.
+- **KRAS-hotspot-mutant vs WT** shows a large dependency difference, while the
+  TP53-hotspot negative control against the same gene shows none.
 
 ## Pitfalls
 
@@ -98,29 +106,30 @@ Reproduced on this release, and worth re-running after any change:
 - `Model.csv` must be indexed by `ModelID` before joining. A bare `read_csv`
   leaves it as a column and every lineage join silently returns **zero rows** -
   assert the joined n before interpreting.
-- **DepMap's `CRISPRInferredCommonEssentials.csv` (1827 genes) is not a frequency
-  threshold.** It includes KRAS (52% of lines dependent) and genes at 0%. Our
-  `frac_dependent >= 0.90` rule gives 974 genes, a strict SUBSET of theirs.
-  Adopting DepMap's list wholesale would flag KRAS as having no therapeutic
-  window; `depmap_common_essentials()` exposes it for cross-reference instead.
+- **DepMap's `CRISPRInferredCommonEssentials.csv` is not a frequency
+  threshold.** It includes KRAS, dependent in only about half of lines, and
+  genes dependent in none. Our `frac_dependent >= 0.90` rule yields a strict
+  SUBSET of theirs. Adopting DepMap's list wholesale would flag KRAS as having
+  no therapeutic window; `depmap_common_essentials()` exposes it for
+  cross-reference instead.
 - Very small p-values underflow to 0.0; `floor_pvalue()` clamps them.
 - **The secondary screen is a separate, older release.** `Repurposing_Public_23Q2`/`24Q2` are
   primary single-dose only, whatever the version number suggests; the dose-response data lives in
   the `prism-repurposing-20q2-secondary-*` files. Only primary-screen HITS were carried into the
-  secondary screen (1489 of ~6800 compounds), so check membership before promising the analysis -
-  read `usecols=["depmap_id","name","auc","ic50","r2"]`, lowercase `name`, and average replicate
-  rows per (`depmap_id`, `name`). **AUC polarity is inverted relative to the primary screen's LFC**:
-  higher AUC = more resistant. AUC is also less proliferation-confounded than single-dose viability
-  (on one worked target, panel-wide correlation with expression r = -0.13 for AUC vs -0.41 for GDSC
-  lnIC50), so prefer it whenever the compound is present.
+  secondary screen - a minority of the primary set - so check membership before promising the
+  analysis; read `usecols=["depmap_id","name","auc","ic50","r2"]`, lowercase `name`, and average
+  replicate rows per (`depmap_id`, `name`). **AUC polarity is inverted relative to the primary
+  screen's LFC**: higher AUC = more resistant. AUC is also less proliferation-confounded than
+  single-dose viability, so prefer it whenever the compound is present.
 - **PRISM and CRISPR are different releases.** 23Q2 and 24Q2 share the *same*
-  919-line panel, of which **732 overlap the CRISPR panel (61%)**. Coverage is
-  uneven by lineage (Lymphoid 44%, Bone 43%, Eye 20%), so a drug-side answer
-  rests on roughly half the lines in those lineages. Always report the joint n.
-- **One drug name can span several compound IDs** - 207 of 6575 names in 24Q2,
-  up to 4 (DOXYCYCLINE). AZ-628 has two BRD IDs differing only by batch suffix,
-  and they behave differently (median LFC -0.85 vs +0.15). Never aggregate PRISM
-  by `Drug.Name`; the compound ID is the unit.
+  cell-line panel, and only about three-fifths of it overlaps the CRISPR panel.
+  Coverage is uneven by lineage - Lymphoid, Bone and Eye are among the
+  thinnest - so a drug-side answer in those lineages rests on a fraction of the
+  lines. Always report the joint n.
+- **One drug name can span several compound IDs**, and they can behave
+  differently: AZ-628 has two BRD IDs differing only by batch suffix whose
+  median LFCs fall on opposite sides of zero. Never aggregate PRISM by
+  `Drug.Name`; the compound ID is the unit.
 - A compound screened in two screens shares one matrix row (AZ-628 in
   REP.1M+REP.300); `depmap_prism_compounds()` collapses those into `screens`.
   In 24Q2 exactly one matrix row has no compound-list annotation and is
