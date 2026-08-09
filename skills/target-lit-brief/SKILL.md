@@ -42,8 +42,10 @@ ordering cannot be trusted — see the recency section below.
 7. **Write.** `out_dir = brief_run_dir(symbol)`, then `brief_write_run(out_dir,
    symbol, rows, synthesis_text, stats, gene_name, query)` — not
    `write_paper_table`/`write_brief` called by hand with a hand-built path.
-   Lands in `results/target_lit_brief/<symbol>/` as `<symbol>_recent_papers.csv`
-   and `README.md`, matching the existing runs. `brief_run_dir` needs
+   Lands in `results/target_lit_brief/<slug>/` as `<slug>_recent_papers.csv`
+   and `README.md`, matching the existing runs — `<slug>` is the symbol
+   lowercased (`CDK12` writes to `cdk12/`), not the case it was given in.
+   `brief_run_dir` needs
    `$SCIENCE_RESULTS_ROOT` set to this repo's `results/` directory (or an
    explicit `root=`) — it raises naming the variable rather than silently
    creating a `results/` folder wherever the session's cwd happens to be.

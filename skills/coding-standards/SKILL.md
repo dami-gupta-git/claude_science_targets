@@ -85,13 +85,19 @@ results/target_triage/usp1/scripts/  the code that produced them
 results/protein_structure/wrn/
 ```
 
-Every run directory carries a `README.md`, and every topic directory carries a
-short index naming each run and what it found. The run README opens with a
+Every run directory carries a `README.md`. The run README opens with a
 `Result` section stating the finding in prose — that section is the deliverable;
 the tables are its evidence — then `Files` with a line per file, `Data sources`
 naming the skills and data release used, and `Limits` for what the result does
 not cover. Use `README.md`, not `RESULTS.md`: it is what renders when the folder
 is opened, and `doc-style` already governs it.
+
+A topic directory carries no separate index file. A hand-maintained bulleted
+list of runs drifts the moment a run is added or a finding is revised — this
+repository's own `target_lit_brief/README.md` went stale twice in one
+afternoon, still describing three runs after a fourth had landed. The run
+directory names and their READMEs are the index; open the topic folder and
+read them.
 
 Code that produced a run goes in that run's `scripts/` subfolder, so the run
 directory itself reads as data. This is analysis-specific wiring — the gene
