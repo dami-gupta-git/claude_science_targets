@@ -61,6 +61,22 @@ For a gene set you already have (screen hits, a cluster), skip to
 `genetea_enrich(genes, background=...)`. For a whole-genome ranked vector, use
 `genetea_enrich_continuous(x)`.
 
+6. Save the run — `genetea_write_run(out_dir, name, summary, gene=..., codependencies=...,
+   terms=..., provenance=...)`, not assembled by hand, into
+   `results/depmap_genetea/<name>/`. `out_dir` comes from `genetea_run_dir(name)`.
+   This is for an analysis run against a real query, not the calibration
+   fixtures (`calibration.png`, the `codependency_*` CSVs) this skill ships
+   beside `SKILL.md` — those document a threshold and stay with the skill.
+
+```python
+partners, terms = codep_enrich("TP53")   # codependencies + terms in one call
+out_dir = genetea_run_dir("TP53")
+genetea_write_run(out_dir, "TP53", gene="TP53", summary="...",
+                  codependencies=partners, terms=terms,
+                  data_sources=["DepMap 24Q2 CRISPRGeneEffect",
+                                "GeneTEA (Boyle et al. 2025)"])
+```
+
 ## Read rank and z, never absolute r
 
 **There is no value of r that separates real partners from background, and none

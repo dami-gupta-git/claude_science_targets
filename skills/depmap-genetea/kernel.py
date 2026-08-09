@@ -15,9 +15,11 @@ kernel.py so this module imports standalone. They are identical by intent: if
 depmap-local's versions change, these should follow.
 """
 import contextlib
+import csv
 import io
 import os
 import re
+import shutil
 import time
 import warnings
 
@@ -1188,3 +1190,261 @@ def genetea_term_context(
         if source is None or src == source
     ]
     return pd.DataFrame(rows, columns=["Gene", "Term", "Source", "Excerpt"])
+
+
+# --------------------------------------------------------------------------
+# Run output: results/<topic>/<run>/
+# --------------------------------------------------------------------------
+#
+# This is for an ANALYSIS run against a real query gene or gene set, not the
+# calibration fixtures this skill ships beside SKILL.md (calibration.png, the
+# codependency_* CSVs, scripts/) -- those document a threshold this skill
+# applies and stay with the skill per coding-standards' fixture exception.
+# The existing results/depmap_genetea/ files (background_comparison_summary.csv
+# etc.) predate this writer and sit loose in the topic directory rather than
+# under a per-run subdirectory; they are left as-is, and a new run nests under
+# results/depmap_genetea/<run>/ going forward.
+RESULTS_TOPIC = "depmap_genetea"
+CODEP_CSV = "codependencies.csv"
+TERMS_CSV = "terms.csv"
+PROVENANCE_CSV = "term_provenance.csv"
+RUN_README = "README.md"
+SUMMARY_MAX_WORDS = 130
+
+STANDING_LIMITS = (
+    "Codependency proposes partners by profile correlation; it does not "
+    "establish physical interaction or a shared complex.",
+    "Neighbouring-locus partners are copy number, not function: check "
+    "`codep_flag_proximity()` before reading an adjacent gene as a real "
+    "partner.",
+    "Ribosome, nucleolus, mitoribosome and large no-expression gene families "
+    "(olfactory receptors, VCX/NBPF) dominate any Chronos correlation vector "
+    "and routinely appear among the enriched terms; they are structure in "
+    "the data, not a query-specific finding.",
+    "A term supported only by the Names/Aliases source is a gene-symbol "
+    "synonym list, not curated prose, and is weaker evidence than the same "
+    "term from RefSeq or UniProt.",
+    "`codep_query_quality()` gates whether a codependency list is "
+    "interpretable at all; a list from a query that fails the gate should "
+    "not be reported as a finding.",
+)
+
+
+def genetea_run_dir(name, root="results", topic=None, make=True):
+    """Path for one analysis run: <root>/<topic>/<slug>/, with scripts/ beside it.
+
+    `name` is typically the query gene or a short label for a gene set (e.g.
+    "TP53" or "screen_hits_batch3"); slugged to snake_case because result
+    directories are named that way and a raw label may carry spaces or case.
+
+    `topic` defaults to RESULTS_TOPIC through an explicit None check rather
+    than in the signature: the kernel.py sidecar loader rejects a non-literal
+    default, and a rejected file defines none of this module's helpers.
+    """
+    topic = RESULTS_TOPIC if topic is None else topic
+    slug = re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
+    if not slug:
+        raise ValueError("genetea_run_dir got an empty name; the run "
+                         "directory is named after the query")
+    out_dir = os.path.join(root, topic, slug)
+    if make:
+        os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    return out_dir
+
+
+def genetea_write_table(path, table, headers=None):
+    """Write a DataFrame (or list of dicts) to CSV. Returns the path, or None
+    if empty.
+
+    Accepts either shape so callers can pass `depmap_codependencies()`'s
+    DataFrame or `genetea_enrich()`'s tidy frame directly. Columns are
+    `headers` first when given, then whatever the table actually carries, so
+    GeneTEA's trailing annotation columns (Stopword, IDF, ...) are written
+    rather than dropped.
+    """
+    if hasattr(table, "to_dict"):
+        rows = table.to_dict("records")
+    else:
+        rows = [dict(r) for r in (table or [])]
+    if not rows:
+        return None
+    headers = list(headers or [])
+    extra = sorted({k for r in rows for k in r} - set(headers), key=str)
+    cols = [c for c in headers if any(c in r for r in rows)] + extra
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({c: ("" if row.get(c) is None else row.get(c))
+                             for c in cols})
+    return path
+
+
+def genetea_check_words(text, cap, label):
+    """Enforce a word cap on run-README prose, naming the count and the cap."""
+    n = len(str(text or "").split())
+    if n > cap:
+        raise ValueError(
+            f"{label} is {n} words; cap is {cap}. Move detail into the table "
+            "rather than the prose.")
+    return n
+
+
+def genetea_markdown_table(rows, cols, top_n=10, fmt=None):
+    """Render the first `top_n` rows of a DataFrame/list-of-dicts as markdown.
+
+    `fmt` maps a column name to a formatter; unlisted float columns render at
+    3 significant figures, everything else with str().
+    """
+    if hasattr(rows, "to_dict"):
+        rows = rows.to_dict("records")
+    rows = list(rows)[:top_n]
+    if not rows:
+        return ""
+    fmt = fmt or {}
+
+    def cell(col, value):
+        if value is None:
+            return ""
+        if col in fmt:
+            return fmt[col](value)
+        if isinstance(value, float):
+            return "{:.3g}".format(value)
+        return str(value)
+
+    lines = ["| " + " | ".join(cols) + " |",
+             "| " + " | ".join("---" for _ in cols) + " |"]
+    for row in rows:
+        lines.append("| " + " | ".join(cell(c, row.get(c)) for c in cols) + " |")
+    return "\n".join(lines)
+
+
+def genetea_run_readme(name, summary, gene=None, codependencies=None,
+                       terms=None, term_kind="discrete", provenance=None,
+                       files=(), data_sources=(), limits=(), title=None,
+                       top_n=10):
+    """Render the run README for one codependency/GeneTEA run. Returns markdown.
+
+    `codependencies` is a `depmap_codependencies()`-shaped table, `terms` a
+    `genetea_enrich()` (term_kind="discrete") or `genetea_enrich_continuous()`
+    (term_kind="continuous") tidy frame. Either or both may be given, matching
+    which of the two questions this run actually answered. `provenance` is a
+    `genetea_term_context()`-shaped table backing the top terms, and its
+    presence in the README states that the terms were traced back to source
+    sentences rather than just listed.
+
+    Sections follow `coding-standards` (Result, Files, Data sources, Limits).
+    """
+    if codependencies is None and terms is None:
+        raise ValueError("genetea_run_readme needs at least one of "
+                         "codependencies or terms; a README with neither is "
+                         "not a result")
+    genetea_check_words(summary, SUMMARY_MAX_WORDS, "summary")
+    if str(summary or "").strip().startswith("-"):
+        raise ValueError("summary must be plain prose, not bullets — it is "
+                         "the paragraph a non-specialist reads first")
+
+    default_title = f"{gene or name} — codependency and GeneTEA"
+    parts = [f"# {title or default_title}", "", str(summary).strip(), "",
+             "## Result", ""]
+
+    if codependencies is not None and len(codependencies):
+        n_partners = len(codependencies)
+        parts += [f"### Codependencies ({n_partners} partner"
+                 f"{'s' if n_partners != 1 else ''} retained)", "",
+                 genetea_markdown_table(
+                     codependencies, ["gene", "r", "n_lines", "z", "rank", "fdr"],
+                     top_n=top_n),
+                 ""]
+
+    if terms is not None and len(terms):
+        n_terms = len(terms)
+        label = "enriched terms" if term_kind == "discrete" else "correlated terms"
+        cols = (["Term", "Effect Size", "FDR", "n Matching Genes in List"]
+               if term_kind == "discrete" else
+               ["Term", "Correlation", "Effect Size", "FDR"])
+        parts += [f"### GeneTEA {label} ({n_terms} total)", "",
+                 genetea_markdown_table(terms, cols, top_n=top_n), ""]
+        if provenance is not None and len(provenance):
+            if hasattr(provenance, "to_dict"):
+                prov_terms = provenance["Term"].tolist()
+            else:
+                prov_terms = [r.get("Term") for r in provenance]
+            n_checked = len(set(prov_terms))
+            parts += [f"Provenance checked for {n_checked} term(s) — see "
+                     f"`{PROVENANCE_CSV}` for the source sentence behind "
+                     "each.", ""]
+
+    parts += ["## Files", ""]
+    for entry in files:
+        f_name, description = (entry["name"], entry["description"]) \
+            if isinstance(entry, dict) else entry
+        parts.append(f"- `{f_name}` — {description}")
+    parts += ["", "## Data sources", ""] + [f"- {s}" for s in data_sources]
+    parts += ["", "## Limits", ""]
+    parts += [f"- {s}" for s in list(STANDING_LIMITS) + list(limits)]
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def genetea_write_run(out_dir, name, summary, gene=None, codependencies=None,
+                      terms=None, term_kind="discrete", provenance=None,
+                      files=(), data_sources=(), limits=(), scripts=(),
+                      top_n=10):
+    """Write one run directory. Returns {name: path} for what was written.
+
+    Writes `codependencies.csv` and/or `terms.csv` (whichever inputs are
+    given), `term_provenance.csv` when `provenance` is given, the run README,
+    and copies `scripts` into `scripts/`.
+    """
+    if codependencies is None and terms is None:
+        raise ValueError("genetea_write_run needs at least one of "
+                         "codependencies or terms")
+    os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    written = {}
+
+    codep_cols = ["gene", "r", "n_lines", "z", "rank", "p", "fdr"]
+    codep_path = genetea_write_table(os.path.join(out_dir, CODEP_CSV),
+                                     codependencies, codep_cols)
+    if codep_path:
+        written["codependencies"] = codep_path
+
+    term_cols = DISCRETE_COLUMNS if term_kind == "discrete" else CONTINUOUS_COLUMNS
+    terms_path = genetea_write_table(os.path.join(out_dir, TERMS_CSV), terms, term_cols)
+    if terms_path:
+        written["terms"] = terms_path
+
+    prov_path = genetea_write_table(os.path.join(out_dir, PROVENANCE_CSV),
+                                    provenance, ["Gene", "Term", "Source", "Excerpt"])
+    if prov_path:
+        written["provenance"] = prov_path
+
+    for src in scripts:
+        dst = os.path.join(out_dir, "scripts", os.path.basename(src))
+        shutil.copyfile(src, dst)
+        written.setdefault("scripts", []).append(dst)
+
+    listed = []
+    if "codependencies" in written:
+        listed.append((CODEP_CSV, "ranked codependency partners: r, n_lines, "
+                                  "z-score against this query's own null, "
+                                  "rank, p and BH-adjusted FDR"))
+    if "terms" in written:
+        listed.append((TERMS_CSV, "GeneTEA "
+                                  + ("enriched" if term_kind == "discrete" else "correlated")
+                                  + " terms with effect size and FDR"))
+    if "provenance" in written:
+        listed.append((PROVENANCE_CSV, "source sentence behind each checked "
+                                       "term, one row per gene per source"))
+    listed += list(files)
+
+    readme = genetea_run_readme(name, summary, gene=gene,
+                                codependencies=codependencies, terms=terms,
+                                term_kind=term_kind, provenance=provenance,
+                                files=listed, data_sources=data_sources,
+                                limits=limits, top_n=top_n)
+    readme_path = os.path.join(out_dir, RUN_README)
+    with open(readme_path, "w", encoding="utf-8") as fh:
+        fh.write(readme)
+    written["readme"] = readme_path
+    return written

@@ -40,6 +40,37 @@ genotype-restricted dependency.
 matrices key on `SequencingID`, so filter `IsDefaultEntryForModel == "Yes"` and
 index by `ModelID`, or rows multiply per model.
 
+## Copy-number markers
+
+A gene lost by deletion carries no damaging mutation, so it is absent from a
+mutation matrix and the scan above cannot rank it. Build the null from deletions
+instead, then ask whether the markers beating yours are the same event:
+
+```python
+markers = deletion_marker_matrix(cn_frame)          # relative CN < 0.25
+scan = marker_null_scan(effect["PRMT5"], markers, min_n=10, max_n=400)
+neighbourhood_check(scan, markers, "MTAP")
+```
+
+**Read `n_independent_above`, not `rank_by_d`.** A deletion removes a contiguous
+stretch of chromosome, so adjacent genes carry near-identical marker columns and
+score near-identical contrasts. On the worked case MTAP ranks 12 of 126, which
+reads as a weak hypothesis until the eleven markers above it turn out to be its
+own 9p21 neighbours — EQTN, IFT74, PLAA, C9orf72, the interferon cluster — all
+carried by the MTAP deletion itself. `n_independent_above` is 0: one locus, not
+eleven rivals.
+
+`codeletion_partners` measures **asymmetric containment**, not Jaccard.
+Deletions at one locus vary in extent between samples, so a narrow deletion is
+usually nested inside a broader one; the MTAP neighbours score containment
+0.82–1.00 but Jaccard only 0.09–0.39, and a Jaccard rule at any usable threshold
+reports every one of them as an independent rival.
+
+This does not settle which gene in the stretch drives the dependency — for that,
+find samples carrying one deletion without the other and contrast them directly.
+In the worked case all 212 MTAP-deleted lines also lack CDKN2A, and the 76
+CDKN2A-only lines are what separate the two.
+
 ## Reading the output
 
 The scan is sorted by *d*, most negative first, with a BH `q` across the markers
@@ -51,6 +82,26 @@ itself the finding.
 `rank_in_null` raises when the named marker was not tested — usually because it
 fell outside the stratum-size band. That is deliberate: a rank silently computed
 over a scan the marker is absent from would be meaningless.
+
+## Saving a run
+
+A standalone check (not run as part of another skill's triage) writes its
+scan, its specificity table if run, and a README stating plainly whether the
+marker survives the controls, via `mcn_write_run` — not assembled by hand:
+
+```python
+out_dir = mcn_run_dir("USP1 in BRCA1-mutant lines")
+mcn_write_run(out_dir, "USP1 in BRCA1-mutant lines",
+              contrast=stratum_contrast(effect["USP1"], brca1_flags),
+              rank=rank_in_null(scan, "BRCA1"), scan=scan,
+              global_shift=global_shift_control(means, brca1_flags),
+              summary="...", data_sources=["DepMap 24Q2"])
+```
+
+Lands in `results/marker_contrast_null/<slug>/`. When this skill runs inside
+another skill's triage instead, that run's own `results/<topic>/<run>/scripts/`
+is still the right home for the wiring, per `coding-standards` — this writer is
+for the standalone case.
 
 ## Calibration
 

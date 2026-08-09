@@ -203,25 +203,82 @@ interpretable than the raw number — its ipTM, and its nearest known active by
 2D similarity, so the reader can see whether a hit is a genuine novel chemotype
 or a near-analog of a training-set compound.
 
-## Report format
+### 6. Write the run to disk
 
-Lead with whether the run is interpretable, because everything else is
-conditional on it:
+A triage is not finished when the numbers are in the kernel. Every run writes a
+directory under `results/boltz_affinity_triage/<target>/`, a sibling of any
+other target run, so two triages stay comparable and the co-folding output —
+which is expensive and needs a GPU to reproduce — survives the session.
+
+```python
+# python
+out_dir = kba_run_dir("EGFR")            # results/boltz_affinity_triage/egfr/
+kba_write_run(out_dir, "EGFR", g, controls, queries=queries,
+              summary="One plain paragraph a non-specialist can follow.",
+              data_sources=["ChEMBL v34 (CHEMBL203)", "BindingDB (P00533)",
+                            "Boltz-2.1, 5 diffusion samples, 3 recycling steps"],
+              limits=["Decoys are measured weak binders, not presumed inactives."],
+              enrichment=ef, leakage_split={"likely_train": 48, "likely_novel": 2},
+              skipped=over_cap, scripts=["run_egfr_triage.py"])
+```
+
+`controls` is one dict per control compound carrying at least `compound_id`,
+`role` (`"active"` or `"decoy"`), `smiles` and the fields from
+`kba_read_result`; `queries` is the same shape without `role`. Percentile within
+the control distribution, nearest known active by Tanimoto, and the pose-caveat
+flags are filled in by `kba_write_run` from the controls you pass, so every run
+reports them identically.
+
+What lands in the directory:
 
 ```
-## Calibration
+results/boltz_affinity_triage/egfr/
+    README.md          the run report -- verdict first, then the ranking
+    calibration.json   gate dict, AUC, null AUC, EF, leakage split, skipped compounds
+    controls.csv       one row per control: KB activity, leakage flag, scores
+    ranked_queries.csv written ONLY when the gate passes
+    scripts/           the target-specific wiring that produced the run
+```
+
+**The ranked table is withheld on a failed gate, on disk as well as in chat.**
+A CSV outlives the caveat that accompanied it: a `ranked_queries.csv` from an
+uncalibrated run will eventually be opened by someone who did not read the
+README, and compounds get ordered from it. `kba_write_run` enforces this — on a
+failing gate it writes the calibration and the controls, and the README's
+ranked-queries section states why there is nothing to rank.
+
+Keep the co-folding output (`out/`, the YAMLs, the CIFs) out of the run
+directory unless the user asks for it — it is large, and `calibration.json`
+plus the two CSVs carry everything the report rests on. Do not write any of
+this into the skill directory: `host.skills.publish()` uploads that whole
+directory to the registry.
+
+## Report format
+
+The README and the chat summary carry the same content in the same order, and
+`kba_run_readme` is what renders it. Lead with whether the run is interpretable,
+because everything else is conditional on it:
+
+```
+## Result / Calibration
 Target, controls (n actives / n decoys, KB sources), control AUC, size-only
-null AUC, EF@10%, verdict from kba_gate. Leakage split: n likely_train /
+null AUC, margin, EF@10%, verdict from kba_gate. Leakage split: n likely_train /
 n likely_novel, with the AUC on each if both are populated.
 
-## Ranked queries        <-- only when the gate passes
-compound | binder_score | control percentile | ipTM | nearest known active (Tanimoto) | leakage flag
+### Ranked queries        <-- only when the gate passes
+compound | binder_score | control percentile | ipTM | nearest known active (Tanimoto) | flags
 
-## Caveats
+## Files / Data sources / Limits
 Boltz-2 affinities are relative, not potencies. Name the compounds over the
 128-atom cap, the low-ipTM rows, and any decoys that are presumed rather than
 measured inactives.
 ```
+
+The potency caveat, the low-ipTM rows and the over-cap compounds are emitted by
+`kba_run_readme` from the data, so they cannot be omitted by forgetting them.
+The opening `summary` paragraph is yours to write and is capped at 130 words —
+it is an orientation for a reader opening the folder, not a second copy of the
+analysis.
 
 ## Things that will bite you
 
@@ -233,14 +290,24 @@ measured inactives.
 | No `affinity_*.json` in output | FASTA input, or the YAML lacks `properties:`. Affinity needs YAML plus a `ligand` binder chain. |
 | `KeyError: 'iptm'` | Single-chain complex — read `ptm`. |
 | BindingDB rows all one assay type | `max_rows` cap interacting with its sort order. Raise it. |
+| `ranked_queries.csv` missing after a run | The gate failed; the ranking is withheld deliberately. `calibration.json` carries `ranking_written: false` and the reasons. |
+| `kba_write_run` raises on a control row | Every control needs `role` set to `active` or `decoy` — the null AUC and the gate counts are derived from it. |
+| README raises a word-cap error | The `summary` paragraph is over 130 words. Move the detail into the tables rather than splitting it across fields. |
+| `nearest_active` empty in the query table | RDKit is not installed, so Tanimoto is not computed. `kba_tanimoto` returns `None` rather than a string-similarity substitute. |
 | No GPU available | Boltz-2 needs one. Check `list_compute`; if empty, tell the user and offer Colab or a smaller control set rather than starting a run that cannot finish. |
 
 ## Helpers in `kernel.py`
 
-`kba_parse_nm` · `kba_pactivity` · `kba_heavy_atoms` · `kba_props` ·
-`kba_match_decoys` · `kba_null_auc` · `kba_leakage_flag` · `kba_write_yaml` ·
-`kba_read_result` · `kba_auc` · `kba_enrichment` · `kba_percentile` ·
-`kba_gate`
+Retrieval and controls: `kba_parse_nm` · `kba_pactivity` · `kba_heavy_atoms` ·
+`kba_props` · `kba_match_decoys` · `kba_null_auc` · `kba_leakage_flag`
+
+Co-folding: `kba_write_yaml` · `kba_read_result`
+
+Scoring and gating: `kba_auc` · `kba_enrichment` · `kba_percentile` ·
+`kba_tanimoto` · `kba_nearest_active` · `kba_pose_flags` · `kba_gate`
+
+Run outputs: `kba_run_dir` · `kba_write_table` · `kba_markdown_table` ·
+`kba_check_words` · `kba_run_readme` · `kba_write_run`
 
 RDKit gives exact atom counts and MW; without it `kba_heavy_atoms` falls back
 to a regex estimate (mean error 0.36 atoms, max 2, on 100 ChEMBL structures)

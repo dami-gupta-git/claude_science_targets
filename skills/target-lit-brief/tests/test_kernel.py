@@ -83,9 +83,20 @@ def test_blank_symbol_is_rejected():
 
 def test_plan_defaults_overfetch_above_target_count():
     plan = k.plan_fetch("USP1")
-    assert plan["n_papers"] == 100
+    assert plan["n_papers"] == k.DEFAULT_N_PAPERS == 5
     assert plan["max_results"] == 200
     assert plan["metadata_chunk"] == 20      # the silent-truncation limit
+
+
+def test_pool_stays_at_the_cap_for_a_small_brief():
+    """A 5-paper brief still over-fetches 200: the API's ordering is unreliable
+    across the whole result set, not just its tail, so the top 5 by date are
+    not recoverable from a small fetch."""
+    assert k.plan_fetch("USP1", n_papers=5)["max_results"] == 200
+
+
+def test_requested_count_is_carried_through():
+    assert k.plan_fetch("USP1", n_papers=25)["n_papers"] == 25
 
 
 def test_overfetch_above_connector_cap_is_rejected():
@@ -170,6 +181,13 @@ def test_ranking_truncates_to_requested_count():
     assert len(k.rank_recent(articles, n_papers=5)) == 5
 
 
+def test_ranking_keeps_the_whole_pool_by_default():
+    """Truncating before screening would leave the brief short by however many
+    of the top rows turn out to be off-target."""
+    articles = [_article(str(i), "2026", "01", f"{i:02d}") for i in range(1, 21)]
+    assert len(k.rank_recent(articles)) == 20
+
+
 def test_duplicate_pmids_collapse():
     articles = [_article("9", "2026", "01", "01"), _article("9", "2026", "01", "01")]
     assert len(k.rank_recent(articles, n_papers=10)) == 1
@@ -246,6 +264,82 @@ def test_verdict_matching_is_word_bounded():
 
 def test_screening_empty_input_is_a_noop():
     assert k.screen_relevance([], "SET", llm=_stub_llm([])) == []
+
+
+def _counting_llm(replies):
+    """Stub that records how many prompts it was asked to judge."""
+    calls = {"n": 0}
+
+    def fake(requests, max_concurrency=8):
+        start = calls["n"]
+        calls["n"] += len(requests)
+        return [{"text": r} for r in replies[start:start + len(requests)]]
+    return fake, calls
+
+
+def test_screening_stops_once_the_quota_is_filled():
+    """The pool is 200 for ranking reasons, but a 5-paper brief must not pay
+    200 screening calls to fill it."""
+    rows = _rows(60)
+    llm, calls = _counting_llm(["YES"] * 60)
+    k.screen_relevance(rows, "USP1", llm=llm, target_n=5)
+    assert calls["n"] == 20                      # one batch at SCREEN_BATCH_MIN
+    assert sum(1 for r in rows if r.get("screen_note")) == 20
+    assert all("screen_note" not in r for r in rows[20:])
+
+
+def test_screening_continues_when_the_first_batch_falls_short():
+    """A symbol that is also an ordinary word discards most candidates; the
+    screen must keep going rather than return a short brief."""
+    rows = _rows(60)
+    replies = ["NO"] * 18 + ["YES"] * 2 + ["YES"] * 40
+    llm, calls = _counting_llm(replies)
+    k.screen_relevance(rows, "SET", llm=llm, target_n=5)
+    assert calls["n"] == 40                      # a second batch was needed
+    assert sum(1 for r in rows if r.get("on_target") and r.get("screen_note")) >= 5
+
+
+def test_screening_everything_when_no_target_is_given():
+    rows = _rows(30)
+    llm, calls = _counting_llm(["YES"] * 30)
+    k.screen_relevance(rows, "USP1", llm=llm, target_n=None)
+    assert calls["n"] == 30
+
+
+def test_selection_drops_unscreened_and_off_target_rows():
+    rows = _rows(30)
+    k.screen_relevance(rows, "SET", llm=_stub_llm(["YES", "NO"] + ["YES"] * 28),
+                       target_n=5)
+    chosen = k.select_for_brief(rows, n_papers=5)
+    assert len(chosen) == 5
+    assert all(r["on_target"] and r["screen_note"] for r in chosen)
+    assert "2" not in [r["pmid"] for r in chosen]      # the NO verdict
+
+
+def test_selection_counts_after_screening_not_before():
+    """Two off-target papers at the top must not reduce a 5-paper brief to 3."""
+    rows = _rows(30)
+    k.screen_relevance(rows, "SET", llm=_stub_llm(["NO", "NO"] + ["YES"] * 28),
+                       target_n=5)
+    assert len(k.select_for_brief(rows, n_papers=5)) == 5
+
+
+def test_selection_ignores_an_on_target_flag_this_screen_did_not_set():
+    """A pool merged across two paged fetches can carry an on_target set
+    elsewhere; only a verdict from this screen counts as one."""
+    rows = _rows(4)
+    k.screen_relevance(rows, "USP1", llm=_stub_llm(["YES", "YES"]), target_n=2,
+                       batch_min=2, batch_factor=1)
+    assert sum(1 for r in rows if r.get("screen_note")) == 2
+    rows[2]["on_target"] = True            # asserted by something else, unjudged here
+    chosen = k.select_for_brief(rows, n_papers=5)
+    assert [r["pmid"] for r in chosen] == ["4", "3"]
+
+
+def test_selection_returns_what_exists_when_the_pool_is_short():
+    rows = _rows(3)
+    k.screen_relevance(rows, "USP1", llm=_stub_llm(["YES"] * 3), target_n=5)
+    assert len(k.select_for_brief(rows, n_papers=5)) == 3
 
 
 # --------------------------------------------------------------------------
@@ -354,6 +448,124 @@ def test_synthesis_prompt_omits_absent_categories():
     prompt = k.synthesis_prompt(rows, "USP1")
     assert "## mechanism" in prompt
     assert "## resistance" not in prompt
+
+
+def test_synthesis_prompt_states_the_reader_and_the_length_limits():
+    rows = _rows(1)
+    k.summarize_papers(rows, "USP1", llm=_stub_llm(
+        [json.dumps({"category": "mechanism", "summary": "s"})]))
+    prompt = k.synthesis_prompt(rows, "USP1")
+    assert "## Overview" in prompt
+    assert "does not work on this target" in prompt      # the reader
+    assert "One idea per sentence" in prompt
+
+
+# --------------------------------------------------------------------------
+# citation renumbering
+# --------------------------------------------------------------------------
+
+def test_inline_pmids_become_numbered_markers_in_order_of_appearance():
+    rows = _rows(3)
+    text = "Second paper (PMID 2). First paper (PMID 1). Again (PMID 2)."
+    out, refs, unknown = k.renumber_citations(text, rows)
+    assert out == "Second paper [1]. First paper [2]. Again [1]."
+    assert [r["pmid"] for r in refs] == ["2", "1"]
+    assert unknown == []
+
+
+def test_multiple_pmids_in_one_parenthetical_collapse_to_one_bracket():
+    rows = _rows(3)
+    out, refs, _ = k.renumber_citations("Shown (PMID 1, PMID 3).", rows)
+    assert out == "Shown [1, 2]."
+    assert len(refs) == 2
+
+
+def test_citation_variants_are_matched():
+    rows = _rows(2)
+    for variant in ["(PMID 1)", "(PMID: 1)", "(PMIDs 1)", "(pmid 1)"]:
+        out, _, _ = k.renumber_citations(f"Claim {variant}.", rows)
+        assert out == "Claim [1].", variant
+
+
+def test_pmid_outside_the_retrieved_set_is_reported_not_renumbered():
+    """The prompt forbids outside citations, so one appearing means the model
+    invented it; silently dropping it would hide an unsupported claim."""
+    rows = _rows(2)
+    out, refs, unknown = k.renumber_citations("Real [x] (PMID 1). Fake (PMID 99999).", rows)
+    assert "[1]" in out
+    assert "(PMID 99999)" in out          # left inline, visibly unconverted
+    assert unknown == ["99999"]
+    assert len(refs) == 1
+
+
+def test_mixed_known_and_unknown_in_one_parenthetical_keeps_the_known():
+    rows = _rows(2)
+    out, refs, unknown = k.renumber_citations("Both (PMID 1, PMID 88888).", rows)
+    assert out == "Both [1]."
+    assert unknown == ["88888"]
+
+
+def test_pmids_separated_by_prose_inside_one_parenthetical_are_converted():
+    """The WRN brief contains '(PMID 1, correction at PMID 2)', which matches
+    no whole-group pattern; both ids must still be numbered."""
+    rows = _rows(3)
+    out, refs, _ = k.renumber_citations("Found (PMID 1, correction at PMID 2).", rows)
+    assert out == "Found ([1], correction at [2])."
+    assert [r["pmid"] for r in refs] == ["1", "2"]
+
+
+def test_the_word_pmid_without_a_number_is_left_alone():
+    """Briefs describe their own CSV columns as 'PMID, date, journal'; that is
+    prose, not a citation."""
+    text = "one row per paper: PMID, date, journal, title."
+    out, refs, unknown = k.renumber_citations(text, _rows(2))
+    assert out == text
+    assert refs == [] and unknown == []
+
+
+def test_text_without_citations_is_unchanged():
+    out, refs, unknown = k.renumber_citations("No citations here.", _rows(2))
+    assert out == "No citations here."
+    assert refs == [] and unknown == []
+
+
+def test_reference_list_links_each_pmid_to_pubmed():
+    rows = _rows(2)
+    _, refs, _ = k.renumber_citations("A (PMID 1).", rows)
+    listing = k.format_references(refs)
+    assert listing.startswith("1. ")
+    assert "https://pubmed.ncbi.nlm.nih.gov/1/" in listing
+    assert "PMID 1" in listing
+
+
+def test_brief_moves_citations_to_a_reference_section(tmp_path):
+    rows = _rows(3)
+    k.screen_relevance(rows, "USP1", llm=_stub_llm(["YES"] * 3))
+    stats = k.coverage_stats(rows, rows)
+    text = k.write_brief(tmp_path / "b.md", "USP1",
+                         "## Overview\n\nIt does things (PMID 2).", stats, rows=rows)
+    assert "(PMID 2)" not in text.split("## References")[0]
+    assert "[1]" in text
+    assert "## References" in text
+
+
+def test_brief_without_rows_leaves_citations_inline(tmp_path):
+    rows = _rows(2)
+    k.screen_relevance(rows, "USP1", llm=_stub_llm(["YES"] * 2))
+    stats = k.coverage_stats(rows, rows)
+    text = k.write_brief(tmp_path / "b.md", "USP1", "Claim (PMID 1).", stats)
+    assert "(PMID 1)" in text
+    assert "## References" not in text
+
+
+def test_brief_flags_an_invented_citation_in_the_method_note(tmp_path):
+    rows = _rows(2)
+    k.screen_relevance(rows, "USP1", llm=_stub_llm(["YES"] * 2))
+    stats = k.coverage_stats(rows, rows)
+    text = k.write_brief(tmp_path / "b.md", "USP1", "Claim (PMID 77777).", stats,
+                         rows=rows)
+    assert "not in the retrieved set" in text
+    assert "77777" in text
 
 
 def test_brief_reports_provenance_and_exclusions(tmp_path):

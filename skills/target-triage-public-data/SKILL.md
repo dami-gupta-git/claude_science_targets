@@ -62,6 +62,21 @@ alone. Good nucleotide-metabolism reference points: RRM1 and DUT run around −2
 essential), KRAS around −1.2 in CRC (lineage dependency), NUDT1 around 0 (dispensable despite
 being a drug target of interest). Fetch them the same way and report side by side.
 
+**A stratified contrast needs a null before you believe it.** A genotype- or
+subtype-restricted dependency — MSI vs MSS, BRCA1-mutant vs wild-type, deleted vs
+intact — returns an uncorrected p-value for a hypothesis drawn from thousands of
+candidate markers. Load `marker-contrast-null` and rank the chosen marker against
+the same contrast over every other eligible marker. This is the step-1 analogue of
+the proliferation confounder at step 3, and it has overturned a triage here: USP1's
+BRCA1-mutant dependency (p = 0.007) ranks 67 of 1,719 markers with zero surviving
+correction, which is where ~68 markers were always going to land.
+
+Copy-number markers need the null built from deletions, not mutations: a gene lost
+by deletion is absent from a damaging-mutation matrix entirely. Score the null over
+every gene's deletion call, then read the markers above yours — for MTAP the eleven
+stronger markers were all its own 9p21 neighbours, carried by the same deletion,
+which is a different finding from eleven unrelated genes beating it.
+
 **Check pan-cancer before concluding "not a target in indication X".** A gene that is flat
 everywhere is a different finding from one that is flat in your indication but essential
 elsewhere — and it extends the caution to every other indication's literature.

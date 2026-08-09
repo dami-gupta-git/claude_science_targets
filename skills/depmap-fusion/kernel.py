@@ -1,4 +1,8 @@
 """Cross-KB fusion: Open Targets human evidence x DepMap cell-line dependency."""
+import csv
+import os
+import re
+import shutil
 
 VERDICTS = (
     "concordant-dependency",
@@ -161,3 +165,264 @@ def fusion_notes():
             "were missing, so the growth-suppressive and inert tests could not "
             "run. Pass the full depmap_selectivity() dict.",
     }
+
+
+# --------------------------------------------------------------------------
+# Run output: results/<topic>/<run>/
+# --------------------------------------------------------------------------
+#
+# Runs land under a topic named for this skill, so the directory a run appears
+# in names the analysis that produced it — the convention `depmap_genetea`
+# already follows. Every run of this skill is a sibling under it.
+RESULTS_TOPIC = "depmap_fusion"
+TABLE_CSV = "fusion_verdicts.csv"
+RUN_README = "README.md"
+SUMMARY_MAX_WORDS = 130  # the opening paragraph is an orientation, not a report
+
+TABLE_COLUMNS = ("gene", "verdict", "knockout_actionable", "ot_score",
+                 "depmap_class", "mean_effect", "frac_dependent",
+                 "lineage_mean_effect", "lineage_frac_dependent",
+                 "lineage_p_bh", "depmap_inferred_essential",
+                 "tractable_modalities")
+
+# Restated from SKILL.md's "Honest limits" so every run states the same
+# standing caveats rather than a hand-picked subset that can drift from the
+# skill as it is revised.
+STANDING_LIMITS = (
+    "`inert-in-panel` is absence of evidence, not evidence of absence: check "
+    "lineage coverage before dismissing a target; a fusion-driven or "
+    "ligand-driven oncogene needs a representative line.",
+    "DepMap measures proliferation in 2D culture. Immune, stromal, "
+    "angiogenic and differentiation-dependent targets are invisible by "
+    "construction.",
+    "No verdict is validation. `concordant-dependency` and "
+    "`context-restricted` are prioritisation signals, not confirmation.",
+    "Check `depmap_class` before trusting `knockout_actionable`: "
+    "pan-essential genes are genuinely required but have no therapeutic "
+    "window without tumour-selective delivery.",
+    "Thresholds (`dep_threshold`, `EVIDENCE_FLOOR`, "
+    "`SUPPRESSOR_MIN_FRAC_POS`, `SUPPRESSOR_MIN_SD`) are conventions, not "
+    "decision boundaries; report the underlying numbers alongside any "
+    "verdict.",
+)
+
+
+def fusion_run_dir(subject, root="results", topic=None, make=True):
+    """Path for one fusion run: <root>/<topic>/<slug>/, with scripts/ beside it.
+
+    `subject` is a gene symbol for a single-target dossier or a disease or
+    indication name for a disease-level triage table (e.g. "lung
+    adenocarcinoma"); it is slugged to snake_case because result directories
+    are named that way and a raw subject may carry spaces, hyphens or case.
+
+    `topic` defaults to RESULTS_TOPIC through an explicit None check rather
+    than in the signature: the kernel.py sidecar loader rejects a non-literal
+    default, and a rejected file defines none of this module's helpers.
+    """
+    topic = RESULTS_TOPIC if topic is None else topic
+    slug = re.sub(r"[^a-z0-9]+", "_", str(subject).strip().lower()).strip("_")
+    if not slug:
+        raise ValueError("fusion_run_dir got an empty subject name; the run "
+                         "directory is named after it")
+    out_dir = os.path.join(root, topic, slug)
+    if make:
+        os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    return out_dir
+
+
+def fusion_write_table(path, rows, headers=None):
+    """Write verdict rows (list of dicts) to CSV. Returns the path, or None if empty.
+
+    Columns are `headers` first, then any further keys present in the rows in
+    sorted order, so a field a caller attaches beyond fuse_target_row()'s own
+    is written rather than dropped. None becomes an empty cell; a list value
+    (`tractable_modalities`) is joined with ';' so it survives a round trip
+    through CSV.
+    """
+    rows = [dict(r) for r in (rows or [])]
+    if not rows:
+        return None
+    headers = list(headers or [])
+    extra = sorted({k for r in rows for k in r} - set(headers))
+    cols = [c for c in headers if any(c in r for r in rows)] + extra
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            out = {}
+            for c in cols:
+                v = row.get(c)
+                if isinstance(v, (list, tuple)):
+                    v = ";".join(str(x) for x in v)
+                out[c] = "" if v is None else v
+            writer.writerow(out)
+    return path
+
+
+def fusion_verdict_mix(rows):
+    """Count fuse_target_row() rows by verdict. Returns {verdict: count}.
+
+    Every row must carry a 'verdict': a row without one is not a completed
+    classification, and folding it into a count silently understates how many
+    targets were actually joined. Raises, naming the gene, rather than
+    skipping the row.
+    """
+    counts = {}
+    for r in rows:
+        v = r.get("verdict")
+        if not v:
+            raise ValueError(
+                f"row for gene {r.get('gene')!r} has no 'verdict'; pass the dicts "
+                "returned by fuse_target_row(), not a partial row")
+        counts[v] = counts.get(v, 0) + 1
+    return counts
+
+
+def fusion_check_words(text, cap, label):
+    """Enforce a word cap on run-README prose, naming the count and the cap."""
+    n = len(str(text or "").split())
+    if n > cap:
+        raise ValueError(
+            f"{label} is {n} words; cap is {cap}. Move detail into the table "
+            "rather than the prose.")
+    return n
+
+
+def fusion_markdown_table(rows, headers=None):
+    """Render fuse_target_row() rows (or any list of dicts) as a markdown table."""
+    rows = [dict(r) for r in (rows or [])]
+    if not rows:
+        return ""
+    headers = list(headers or [])
+    cols = [c for c in headers if any(c in r for r in rows)]
+    cols += sorted({k for r in rows for k in r} - set(cols))
+
+    def fmt(v):
+        if v is None:
+            return ""
+        if isinstance(v, (list, tuple)):
+            return ";".join(str(x) for x in v)
+        if isinstance(v, bool):
+            return str(v)
+        if isinstance(v, float):
+            return "{:.3g}".format(v)
+        return str(v)
+
+    lines = ["| " + " | ".join(cols) + " |",
+             "| " + " | ".join("---" for _ in cols) + " |"]
+    for row in rows:
+        lines.append("| " + " | ".join(fmt(row.get(c)) for c in cols) + " |")
+    return "\n".join(lines)
+
+
+def fusion_run_readme(subject, rows, summary, disease=None, files=(),
+                      data_sources=(), limits=(), title=None):
+    """Render the run README for one fusion run. Returns markdown text.
+
+    `rows` is a list of fuse_target_row() dicts: one row for a single-target
+    dossier, many for a disease-level triage table. Every row must carry a
+    'verdict' (fusion_verdict_mix raises otherwise, naming the gene), because a
+    README that silently omits a target's verdict misrepresents how many
+    targets the run actually covered.
+
+    Sections follow `coding-standards` (Result, Files, Data sources, Limits).
+    A single-row `rows` renders as a target dossier; more than one renders as
+    a triage table with the verdict mix and the joined n. `summary` is plain
+    prose capped at SUMMARY_MAX_WORDS. `disease` names the indication for a
+    triage table and is not required for a dossier.
+    """
+    if not rows:
+        raise ValueError("fusion_run_readme got no rows; a README with no "
+                         "verdicts is not a result")
+    fusion_verdict_mix(rows)  # validates every row before any prose is built
+    fusion_check_words(summary, SUMMARY_MAX_WORDS, "summary")
+    if str(summary or "").strip().startswith("-"):
+        raise ValueError("summary must be plain prose, not bullets — it is the "
+                         "paragraph a non-specialist reads first")
+
+    is_dossier = len(rows) == 1
+    default_title = (f"{subject} target dossier — Open Targets × DepMap"
+                     if is_dossier else
+                     f"{subject} target triage — Open Targets × DepMap")
+    parts = [f"# {title or default_title}", "", str(summary).strip(), "",
+             "## Result", ""]
+
+    if is_dossier:
+        row = rows[0]
+        parts += [
+            "| quantity | value |", "| --- | --- |",
+            f"| gene | {row.get('gene')} |",
+            f"| verdict | {row.get('verdict')} |",
+            f"| knockout_actionable | {row.get('knockout_actionable')} |",
+            f"| ot_score | {row.get('ot_score')} |",
+            f"| depmap_class | {row.get('depmap_class')} |",
+            f"| mean_effect | {row.get('mean_effect')} |",
+            f"| frac_dependent | {row.get('frac_dependent')} |", ""]
+        if row.get("lineage_mean_effect") is not None:
+            parts += [
+                f"| lineage_mean_effect | {row.get('lineage_mean_effect')} |",
+                f"| lineage_frac_dependent | {row.get('lineage_frac_dependent')} |",
+                f"| lineage_p_bh | {row.get('lineage_p_bh')} |", ""]
+    else:
+        mix = fusion_verdict_mix(rows)
+        n = len(rows)
+        n_actionable = sum(1 for r in rows if r.get("knockout_actionable"))
+        parts += [f"Joined n = {n} targets"
+                 + (f" for {disease}" if disease else "") + ".", ""]
+        parts += ["| verdict | n | % |", "| --- | --- | --- |"]
+        for v, c in sorted(mix.items(), key=lambda kv: -kv[1]):
+            parts.append(f"| {v} | {c} | {100.0 * c / n:.1f}% |")
+        parts += ["", f"{n_actionable} of {n} targets ({100.0 * n_actionable / n:.1f}%) "
+                      "are `knockout_actionable`.", "",
+                 "### Verdicts", "", fusion_markdown_table(rows, TABLE_COLUMNS), ""]
+
+    parts += ["## Files", ""]
+    for entry in files:
+        name, description = (entry["name"], entry["description"]) \
+            if isinstance(entry, dict) else entry
+        parts.append(f"- `{name}` — {description}")
+    parts += ["", "## Data sources", ""] + [f"- {s}" for s in data_sources]
+    parts += ["", "## Limits", ""]
+    parts += [f"- {s}" for s in list(STANDING_LIMITS) + list(limits)]
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def fusion_write_run(out_dir, subject, rows, summary, disease=None, files=(),
+                     data_sources=(), limits=(), scripts=()):
+    """Write one fusion run directory. Returns {name: path} for what was written.
+
+    Writes `fusion_verdicts.csv` (one row per target from fuse_target_row()),
+    the run README, and copies `scripts` into `scripts/`. `rows` is validated
+    up front through fusion_verdict_mix, so a run with a malformed row fails
+    before anything is written rather than leaving a half-written directory.
+    """
+    rows = [dict(r) for r in (rows or [])]
+    fusion_verdict_mix(rows)
+
+    os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    written = {}
+
+    table_path = fusion_write_table(os.path.join(out_dir, TABLE_CSV), rows, TABLE_COLUMNS)
+    if table_path:
+        written["table"] = table_path
+
+    for src in scripts:
+        dst = os.path.join(out_dir, "scripts", os.path.basename(src))
+        shutil.copyfile(src, dst)
+        written.setdefault("scripts", []).append(dst)
+
+    listed = []
+    if "table" in written:
+        listed.append((TABLE_CSV, "one row per target: verdict, knockout_actionable, "
+                                  "ot_score, DepMap class and the underlying effect "
+                                  "and lineage statistics"))
+    listed += list(files)
+
+    readme = fusion_run_readme(subject, rows, summary, disease=disease,
+                               files=listed, data_sources=data_sources, limits=limits)
+    readme_path = os.path.join(out_dir, RUN_README)
+    with open(readme_path, "w", encoding="utf-8") as fh:
+        fh.write(readme)
+    written["readme"] = readme_path
+    return written

@@ -26,6 +26,18 @@ Load both; this skill only adds the join and the verdict.
    modalities)`. Feed it the full `depmap_selectivity()` dict: the verdict needs
    `sd_effect` and `frac_positive`, not just the mean.
 4. Report the verdict mix, and always the joined n.
+5. **Save the run** - `fusion_write_run(out_dir, subject, rows, summary, ...)`
+   into `results/depmap_fusion/<subject>/`, not assembled by hand. A single row
+   renders as a target dossier; several render as a triage table with the
+   verdict mix. `out_dir` comes from `fusion_run_dir(subject)`:
+
+```python
+rows = [fuse_target_row("EGFR", ot_score, effect_stats, lineage_row, modalities), ...]
+out_dir = fusion_run_dir("lung adenocarcinoma")
+fusion_write_run(out_dir, "lung adenocarcinoma", rows,
+                 summary="...", disease="MONDO_0005061",
+                 data_sources=["Open Targets Platform", "DepMap 24Q2"])
+```
 
 ## Verdicts
 

@@ -85,6 +85,19 @@ press-release-only — say so explicitly and lower confidence.
 8. **Build the three tables**, then `audit_summary(evidence_rows, trial_rows)`.
 9. **Write the report** with methodology, tier rationale citing evidence IDs,
    discrepancy flags, a human-check queue, and limitations.
+10. **Save the run** — `audit_write_run(out_dir, name, summary, candidate=...,
+    evidence_rows=..., trial_rows=...)`, not assembled by hand, into
+    `results/ai_origination_audit/<name>/`. `out_dir` comes from
+    `audit_run_dir(name)`. Fails before writing anything if `candidate` has no
+    `tier` set.
+
+```python
+out_dir = audit_run_dir("CandidateX")
+audit_write_run(out_dir, "CandidateX", summary="...",
+                candidate=candidate_row, evidence_rows=evidence_rows,
+                trial_rows=trial_rows,
+                data_sources=["ClinicalTrials.gov API v2", "PubMed", "company press releases"])
+```
 
 ## Discrepancy classes to check every time
 

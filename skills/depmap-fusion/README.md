@@ -27,6 +27,36 @@ turned out not to be viable knockout targets (36 of 55; lung 19/30, pancreatic
 Module constants: `VERDICTS`, `EVIDENCE_FLOOR`, `SUPPRESSOR_MIN_FRAC_POS`,
 `SUPPRESSOR_MIN_SD`, `INERT_MAX_SD`, `INERT_MAX_ABS_MEAN`.
 
+### Saving a run
+
+- `fusion_run_dir(subject, root="results", topic="depmap_fusion")` — the path for
+  one run, `<root>/<topic>/<slug>/`, with `scripts/` created beside it.
+  `subject` is a gene symbol for a single-target dossier or a disease name for
+  a triage table; it is slugged to snake_case.
+- `fusion_write_run(out_dir, subject, rows, summary, disease=None, files=(),
+  data_sources=(), limits=(), scripts=())` — writes `fusion_verdicts.csv` (one
+  row per `fuse_target_row()` result), the run `README.md`, and copies
+  `scripts` into `scripts/`. Returns the paths written. Validates every row
+  carries a `verdict` before writing anything.
+- `fusion_run_readme(subject, rows, summary, disease=None, files=(),
+  data_sources=(), limits=(), title=None)` — renders the README text
+  `fusion_write_run` saves: a single row renders as a target dossier, several
+  render as a triage table with the verdict mix, joined n, and the fraction
+  `knockout_actionable`. Follows `coding-standards`' Result/Files/Data
+  sources/Limits structure; the Limits section always includes this skill's
+  standing caveats (inert-in-panel is absence of evidence, DepMap is 2D-culture
+  proliferation, no verdict is validation, check `depmap_class` before trusting
+  `knockout_actionable`) plus any run-specific ones passed in.
+- `fusion_verdict_mix(rows)` — counts rows by verdict, `{verdict: count}`.
+  Raises, naming the gene, if a row has no `verdict`.
+- `fusion_write_table(path, rows, headers=None)` and `fusion_markdown_table(rows,
+  headers=None)` — CSV and markdown rendering of `fuse_target_row()` rows,
+  used by `fusion_write_run`/`fusion_run_readme` but usable standalone.
+
+Runs land in `results/depmap_fusion/<slug>/`, a topic named for this skill so
+the directory names the analysis that produced it. The WRN dossier, the
+verdict-shift audit and the BRAF melanoma run are siblings under it.
+
 ## Companion skills
 
 Evidence retrieval and dependency statistics live in two separate skills; this

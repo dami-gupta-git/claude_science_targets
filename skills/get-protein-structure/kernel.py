@@ -1,5 +1,8 @@
 """Helpers for get-protein-structure: resolve identifier -> rank -> fetch -> prep."""
+import csv
 import json
+import re
+import shutil
 import urllib.request
 import urllib.parse
 import gzip
@@ -1395,4 +1398,248 @@ def get_structure_with_site(query, organism_id=9606, out_dir="structures",
         res["box"] = tr["box"]
         res["pocket_ligand"] = tr["ligand"]
         res["pocket_source"] = "transferred from %s (RMSD %.2f A)" % (tr["donor"], tr["rmsd"])
+    return res
+
+
+# --------------------------------------------------------------------------
+# Run output: results/<topic>/<run>/
+# --------------------------------------------------------------------------
+#
+# get_structure()/get_pdb_entry()/fetch_pdb()/fetch_alphafold() all default
+# out_dir="structures" for standalone use (e.g. handing a receptor straight
+# to a docking tool without saving a run). get_structure_to_results() is the
+# wrapper that routes a full run into results/<topic>/<run>/ instead, so a
+# caller does not have to pass out_dir by hand and remember to write a README.
+RESULTS_TOPIC = "protein_structure"
+CANDIDATES_CSV = "ranked_structures.csv"
+POCKET_CSV = "pocket_residues.csv"
+COVERAGE_CSV = "coverage_gaps.csv"
+RUN_README = "README.md"
+SUMMARY_MAX_WORDS = 130
+
+CANDIDATE_COLUMNS = ("pdb_id", "method", "resolution", "r_free", "state",
+                     "coverage", "n_mutations", "score")
+
+
+def gps_run_dir(target, root="results", topic=None, make=True):
+    """Path for one structure run: <root>/<topic>/<slug>/, with scripts/ beside it.
+
+    `target` is the query passed to get_structure() (gene symbol, accession,
+    protein name); slugged to snake_case because result directories are named
+    that way and a raw query may carry spaces or case.
+
+    `topic` defaults to RESULTS_TOPIC through an explicit None check rather
+    than in the signature: the kernel.py sidecar loader rejects a non-literal
+    default, and a rejected file defines none of this module's helpers.
+    """
+    topic = RESULTS_TOPIC if topic is None else topic
+    slug = re.sub(r"[^a-z0-9]+", "_", str(target).strip().lower()).strip("_")
+    if not slug:
+        raise ValueError("gps_run_dir got an empty target name; the run "
+                         "directory is named after the query")
+    out_dir = os.path.join(root, topic, slug)
+    if make:
+        os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    return out_dir
+
+
+def gps_write_table(path, rows, headers=None):
+    """Write rows (list of dicts) to CSV. Returns the path, or None if empty."""
+    rows = [dict(r) for r in (rows or [])]
+    if not rows:
+        return None
+    headers = list(headers or [])
+    extra = sorted({k for r in rows for k in r} - set(headers))
+    cols = [c for c in headers if any(c in r for r in rows)] + extra
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({c: ("" if row.get(c) is None else row.get(c))
+                             for c in cols})
+    return path
+
+
+def gps_check_words(text, cap, label):
+    """Enforce a word cap on run-README prose, naming the count and the cap."""
+    n = len(str(text or "").split())
+    if n > cap:
+        raise ValueError(
+            f"{label} is {n} words; cap is {cap}. Move detail into the table "
+            "rather than the prose.")
+    return n
+
+
+def gps_run_readme(name, result, summary, files=(), data_sources=(),
+                   limits=(), title=None):
+    """Render the run README for one get_structure() result. Returns markdown.
+
+    `result` is whatever get_structure() / get_structure_with_site() /
+    get_pdb_entry() returned. Sections follow `coding-standards`
+    (Result, Files, Data sources, Limits). The Limits section is
+    `structure_caveats(result)` verbatim, plus any run-specific ones passed
+    in — those caveats are already computed by this skill and restating them
+    by hand would risk drifting from what the function actually checks.
+    """
+    if result.get("error"):
+        raise ValueError(f"gps_run_readme got a result with an error: "
+                         f"{result['error']!r}; there is no structure to report")
+    gps_check_words(summary, SUMMARY_MAX_WORDS, "summary")
+    if str(summary or "").strip().startswith("-"):
+        raise ValueError("summary must be plain prose, not bullets — it is "
+                         "the paragraph a non-specialist reads first")
+
+    up = result.get("uniprot") or {}
+    default_title = f"{up.get('gene') or name} structure"
+    parts = [f"# {title or default_title}", "", str(summary).strip(), "",
+             "## Result", ""]
+
+    cand = (result.get("candidates") or [None])[0]
+    af = result.get("alphafold") or {}
+    if cand:
+        parts += [
+            "| quantity | value |", "| --- | --- |",
+            f"| chosen entry | {result.get('chosen')} |",
+            f"| method | {cand.get('method')} |",
+            f"| resolution | {cand.get('resolution')} |",
+            f"| state | {cand.get('state')} |",
+            f"| coverage | {cand.get('coverage')} |",
+            f"| n_mutations | {cand.get('n_mutations')} |", ""]
+    elif af.get("has_model"):
+        parts += [
+            "| quantity | value |", "| --- | --- |",
+            f"| chosen entry | AlphaFold {result.get('chosen')} (predicted) |",
+            f"| global pLDDT | {af.get('global_plddt')} |", ""]
+
+    if result.get("pocket_transfer") and not result["pocket_transfer"].get("error"):
+        tr = result["pocket_transfer"]
+        parts += [f"Binding site transferred from {tr.get('donor')} "
+                 f"(ligand {tr.get('ligand')}) at {tr.get('rmsd')} A RMSD over "
+                 f"{tr.get('n_aligned')} residues.", ""]
+
+    parts += ["## Files", ""]
+    for entry in files:
+        f_name, description = (entry["name"], entry["description"]) \
+            if isinstance(entry, dict) else entry
+        parts.append(f"- `{f_name}` — {description}")
+    parts += ["", "## Data sources", ""] + [f"- {s}" for s in data_sources]
+    parts += ["", "## Limits", ""]
+    caveats = structure_caveats(result)
+    if not caveats and not limits:
+        parts.append("- None flagged by `structure_caveats()`.")
+    else:
+        parts += [f"- {s}" for s in caveats + list(limits)]
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def gps_write_run(out_dir, name, result, summary=None, files=(),
+                  data_sources=(), limits=(), scripts=()):
+    """Write one structure run directory. Returns {name: path} for what was written.
+
+    Copies the structure file(s) already on disk at `result["path"]` (and
+    `result["raw_path"]` when different) into `out_dir`, writes the ranked
+    candidates table, the pocket-residues table (when a pocket was found),
+    the coverage-gap table (when computed), the run README, and copies
+    `scripts` into `scripts/`.
+    """
+    if result.get("error"):
+        raise ValueError(f"gps_write_run got a result with an error: "
+                         f"{result['error']!r}; nothing to write")
+    os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    written = {}
+
+    for key in ("path", "raw_path"):
+        src = result.get(key)
+        if not src or not os.path.isfile(src):
+            continue
+        dst = os.path.join(out_dir, os.path.basename(src))
+        if os.path.abspath(src) != os.path.abspath(dst):
+            shutil.copyfile(src, dst)
+        written[key] = dst
+
+    cand_path = gps_write_table(os.path.join(out_dir, CANDIDATES_CSV),
+                                result.get("candidates"), CANDIDATE_COLUMNS)
+    if cand_path:
+        written["candidates"] = cand_path
+
+    pocket_path = gps_write_table(os.path.join(out_dir, POCKET_CSV),
+                                  result.get("pocket"),
+                                  ["chain", "seq_id", "comp_id", "min_dist"])
+    if pocket_path:
+        written["pocket"] = pocket_path
+
+    gaps = (result.get("coverage_gaps") or {}).get("gaps")
+    gaps_path = gps_write_table(os.path.join(out_dir, COVERAGE_CSV), gaps)
+    if gaps_path:
+        written["coverage_gaps"] = gaps_path
+
+    for src in scripts:
+        dst = os.path.join(out_dir, "scripts", os.path.basename(src))
+        shutil.copyfile(src, dst)
+        written.setdefault("scripts", []).append(dst)
+
+    listed = []
+    if "path" in written:
+        listed.append((os.path.basename(written["path"]),
+                       "the prepared structure: cleaned, chain-selected, "
+                       "ready for downstream use"))
+    if "raw_path" in written and written["raw_path"] != written.get("path"):
+        listed.append((os.path.basename(written["raw_path"]), "the unprocessed file as downloaded"))
+    if "candidates" in written:
+        listed.append((CANDIDATES_CSV, "every ranked candidate entry considered, "
+                                       "not just the chosen one"))
+    if "pocket" in written:
+        listed.append((POCKET_CSV, "protein residues within the pocket radius "
+                                   "of the bound or transferred ligand"))
+    if "coverage_gaps" in written:
+        listed.append((COVERAGE_CSV, "unresolved regions in the chosen chain, "
+                                     "with AlphaFold fill confidence where "
+                                     "relevant"))
+    listed += list(files)
+
+    if summary is None:
+        raise ValueError("gps_write_run needs a summary — the plain-prose "
+                         "paragraph a non-specialist reads first")
+    readme = gps_run_readme(name, result, summary, files=listed,
+                            data_sources=data_sources, limits=limits)
+    readme_path = os.path.join(out_dir, RUN_README)
+    with open(readme_path, "w", encoding="utf-8") as fh:
+        fh.write(readme)
+    written["readme"] = readme_path
+    return written
+
+
+def get_structure_to_results(query, name=None, root="results",
+                             topic=None, summary=None, files=(),
+                             data_sources=(), limits=(), scripts=(),
+                             with_site=False, donor_pdb_id=None, **kwargs):
+    """get_structure() (or get_structure_with_site()), saved as a full run.
+
+    Routes the fetch into `<root>/<topic>/<slug>/` via `gps_run_dir` instead
+    of the bare "structures" default, then writes the run (tables, README
+    with `structure_caveats()` as its Limits) via `gps_write_run`. `name`
+    defaults to `query`. Pass `with_site=True` to call
+    `get_structure_with_site()` when the downstream step needs a pocket
+    regardless of what the chosen entry has.
+
+    `topic` defaults to RESULTS_TOPIC through an explicit None check rather
+    than in the signature: the kernel.py sidecar loader rejects a non-literal
+    default, and a rejected file defines none of this module's helpers.
+
+    Returns the `get_structure()`-shaped result dict with a `run` key added:
+    the `{name: path}` dict `gps_write_run` returned.
+    """
+    topic = RESULTS_TOPIC if topic is None else topic
+    out_dir = gps_run_dir(name or query, root=root, topic=topic)
+    if with_site:
+        res = get_structure_with_site(query, out_dir=out_dir,
+                                      donor_pdb_id=donor_pdb_id, **kwargs)
+    else:
+        res = get_structure(query, out_dir=out_dir, **kwargs)
+    if res.get("error"):
+        return res
+    res["run"] = gps_write_run(out_dir, name or query, res, summary=summary,
+                               files=files, data_sources=data_sources,
+                               limits=limits, scripts=scripts)
     return res

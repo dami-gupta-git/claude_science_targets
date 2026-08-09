@@ -8,6 +8,11 @@ grouped by theme. It exists because the two obvious shortcuts for this task —
 taking the first N results of a `sort=pub_date` search, and trusting a bare gene
 symbol as a query — both return the wrong papers.
 
+The brief is written for a scientist who knows basic genetics and drug
+discovery but does not work on the target: a plain-prose overview first, then
+themed sections that open with a plain sentence and continue as bullets, and
+numbered references at the end rather than PubMed ids inline.
+
 The retrieval itself runs against the `pubmed` connector, which is reachable
 only from the control-plane kernel. The helpers here are pure: they build the
 query, rank and screen the returned records, and render the outputs, so the
@@ -19,7 +24,7 @@ whole module is testable without network access.
   — the PubMed query string for one symbol. Aliases are OR-grouped and
   deduplicated against the symbol; `extra` is ANDed as raw PubMed syntax.
   Raises on a blank symbol.
-- `plan_fetch(symbol, aliases=None, extra=None, n_papers=100, overfetch=200, date_from=None, date_to=None)`
+- `plan_fetch(symbol, aliases=None, extra=None, n_papers=5, overfetch=200, date_from=None, date_to=None)`
   — the retrieval parameters as a dict, for handing to the control-plane kernel.
   Raises when `overfetch` exceeds the connector's 200-per-call limit or falls
   below `n_papers`.
@@ -28,15 +33,24 @@ whole module is testable without network access.
   components become 0.
 - `format_date(date_tuple)` — that tuple to `"2026-08-04"`, with `??` for
   unknown parts.
+- `clean_text(value)` — decodes the HTML entities PubMed leaves in titles and
+  abstracts, where Greek letters arrive as numeric character references.
 - `flatten_article(article)` — one connector record to a flat row: PMID, date,
   journal, title, lead author, author count, DOI, PMCID, article types,
   abstract.
-- `rank_recent(articles, n_papers=100)` — the most recent papers, newest first,
-  deduplicated by PMID and ranked on the parsed date rather than the order the
-  connector returned. Undated records sort last but are retained.
-- `screen_relevance(rows, symbol, gene_name="", llm=None)` — sets `on_target`
-  and `screen_note` per row by judging each abstract against the gene identity.
-  Rows the model could not judge are kept and marked `unscreened`.
+- `rank_recent(articles, n_papers=None)` — papers newest first, deduplicated by
+  PMID and ranked on the parsed date rather than the order the connector
+  returned. Undated records sort last but are retained. The default keeps the
+  whole pool, since screening runs down it.
+- `screen_relevance(rows, symbol, gene_name="", llm=None, target_n=None, batch_factor=2, batch_min=20)`
+  — sets `on_target` and `screen_note` per row by judging each abstract against
+  the gene identity. With `target_n` it screens in batches and stops once that
+  many on-target papers are found, leaving the rest of the pool unjudged. Rows
+  the model could not judge are kept and marked `unscreened`.
+- `select_for_brief(rows, n_papers=5)` — the on-target, actually-screened rows
+  that go into the brief, newest first. Truncation happens here rather than
+  before screening, so off-target papers near the top of the ranking do not
+  reduce the count.
 - `summarize_papers(rows, symbol, gene_name="", llm=None, model=None)` — adds a
   one-line `summary` and a `category` drawn from `TRIAGE_CATEGORIES`.
   Unparseable replies yield an empty summary marked `unsummarized`, never an
@@ -48,11 +62,33 @@ whole module is testable without network access.
 - `synthesis_prompt(rows, symbol, gene_name="", stats=None)` — the cross-paper
   prompt, grouped by category with every PMID listed so citations come from the
   retrieved set.
-- `write_brief(path, symbol, synthesis_text, stats, gene_name="", query="")` —
-  the markdown brief with its provenance header and method note.
+- `renumber_citations(text, rows)` — inline `(PMID 12345678)` citations to `[1]`
+  markers, numbered by first appearance. Returns the rewritten text, the
+  reference entries, and any cited PMID absent from `rows`.
+- `format_references(references)` — the reference list as markdown, one
+  numbered line per paper with a PubMed link and the DOI where present.
+- `write_brief(path, symbol, synthesis_text, stats, gene_name="", query="", rows=None)`
+  — the markdown brief with its provenance header, references and method note.
+  Passing `rows` converts the citations; omitting it leaves them inline.
 
 Module constants: `SEARCH_MAX`, `METADATA_CHUNK`, `DEFAULT_OVERFETCH`,
-`DEFAULT_N_PAPERS`, `TRIAGE_CATEGORIES`, `MONTHS`.
+`DEFAULT_N_PAPERS`, `SCREEN_BATCH_FACTOR`, `SCREEN_BATCH_MIN`,
+`TRIAGE_CATEGORIES`, `MONTHS`, `CITATION_GROUP`, `CITATION_SINGLE`.
+
+### Saving a run
+
+- `brief_run_dir(symbol, root="results", topic="target_lit_brief")` — the
+  path for one brief, `<root>/<topic>/<slug>/`, with `scripts/` created
+  beside it.
+- `brief_write_run(out_dir, symbol, kept_rows, synthesis_text, stats,
+  gene_name="", query="", scripts=())` — wraps `write_paper_table` and
+  `write_brief` rather than replacing them: writes
+  `<symbol>_recent_papers.csv` and `README.md` into `out_dir`, matching the
+  file names the existing runs already use, and copies `scripts` into
+  `scripts/`. Returns the paths written.
+
+Runs land in `results/target_lit_brief/<slug>/`, the topic the existing USP1
+and WRN runs already use.
 
 ## Calibration
 
@@ -89,9 +125,24 @@ Alias expansion is off by default on the same basis: `USP1` plus its MyGene
 alias `UBP` goes from 373 to 771 hits, while `WRN` plus three aliases gains 10
 and `CDK12` plus three gains 11.
 
+`DEFAULT_N_PAPERS = 5` is an editorial default, not a measurement: it is sized
+for "what is new on this target", and any run can override it with `n_papers=`.
+The two earlier runs in `results/target_lit_brief` used 95 and 100 papers and
+produced theme sections of 400-plus words carrying twenty citations each, which
+is what the current prompt structure and this default are set against.
+
+`SCREEN_BATCH_FACTOR = 2` with `SCREEN_BATCH_MIN = 20` sets how far past the
+requested count screening goes before giving up on filling it. The measured
+off-target rate was 21% for `USP1` (25 of 118 screened) and 33% for `WRN` (61
+of 186), so screening twice the quota fills it in a single batch at both rates,
+and the floor keeps a small run to one batch. Re-derive from the
+`n_off_target` and `n_screened` counts that `coverage_stats` reports in any
+run's brief. A symbol that is also an ordinary word discards more and warrants
+a higher factor.
+
 ## Tests
 
-38 tests, no network and no LLM — the connector payload shape is synthesised
+63 tests, no network and no LLM — the connector payload shape is synthesised
 from live responses and the LLM is injected as a stub.
 
 ```
@@ -109,10 +160,25 @@ mutation may fail more than one test, since several tests share a behaviour:
 | verdict matched as a substring, unbounded | 2 (`verdict_matching_is_word_bounded`, `unparseable_verdict_is_treated_as_unscreened`) |
 | unscreened papers dropped instead of kept | 2 (`llm_failure_keeps_paper_and_flags_it`, `coverage_counts_only_screened_papers_as_off_target`) |
 | overfetch cap guard removed | 1 (`overfetch_above_connector_cap_is_rejected`) |
+| `rank_recent` truncates before screening | 1 (`ranking_keeps_the_whole_pool_by_default`) |
+| screening never stops early | 2 (`screening_stops_once_the_quota_is_filled`, `screening_continues_when_the_first_batch_falls_short`) |
+| screening stops after one batch regardless of quota | 1 (`screening_continues_when_the_first_batch_falls_short`) |
+| unscreened rows admitted to the brief | 1 (`selection_ignores_an_on_target_flag_this_screen_did_not_set`) |
+| a cited PMID outside the retrieved set dropped silently | 1 (`pmid_outside_the_retrieved_set_is_reported_not_renumbered`) |
+| citations numbered by count rather than first appearance | 1 (`inline_pmids_become_numbered_markers_in_order_of_appearance`) |
+| single-citation second pass removed | 1 (`pmids_separated_by_prose_inside_one_parenthetical_are_converted`) |
 
 Reproduce by applying one inversion at a time and running the suite. An
 inversion that fails nothing would mean the named behaviour is unconstrained;
-none of the five is.
+none of these is.
+
+The citation regex is also checked against the two briefs already in
+`results/target_lit_brief`, which between them carry 260 inline citations in
+four formats — `(PMID n)`, a line-wrapped variant, `(PMID n, PMID m)`, and
+`(PMID n, correction at PMID m)`. All convert, resolving to 95 and 100 distinct
+references with none cited from outside the retrieved set and none left inline.
+The prose phrase "one row per paper: PMID, date, journal" correctly does not
+convert.
 
 ## Scope
 

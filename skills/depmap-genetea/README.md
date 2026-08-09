@@ -88,6 +88,40 @@ Internal helpers (`codep_matrix_path`, `codep_pairwise_r`, `genetea_empty_frame`
 carry no leading underscore because the skill sidecar loader reserves
 that prefix. They are implementation detail; call the functions above instead.
 
+### Saving a run
+
+- `genetea_run_dir(name, root="results", topic="depmap_genetea")` — the path
+  for one run, `<root>/<topic>/<slug>/`, with `scripts/` created beside it.
+  `name` is the query gene or a short label for a gene set.
+- `genetea_write_run(out_dir, name, summary, gene=None, codependencies=None,
+  terms=None, term_kind="discrete", provenance=None, files=(),
+  data_sources=(), limits=(), scripts=(), top_n=10)` — writes
+  `codependencies.csv` and/or `terms.csv` (whichever inputs are given),
+  `term_provenance.csv` when `provenance` is given, the run README, and
+  copies `scripts` into `scripts/`. Returns the paths written.
+- `genetea_run_readme(name, summary, gene=None, codependencies=None,
+  terms=None, term_kind="discrete", provenance=None, files=(),
+  data_sources=(), limits=(), title=None, top_n=10)` — renders the README
+  text `genetea_write_run` saves, per `coding-standards`' Result/Files/Data
+  sources/Limits structure. Reports the top codependency partners and/or the
+  top GeneTEA terms, whichever the run actually produced; notes when the top
+  terms' provenance was checked against source sentences. The Limits section
+  always includes this skill's standing caveats (codependency proposes
+  partners, not physical interaction; neighbouring-locus partners are copy
+  number, not function; ribosome/nucleolus/no-expression gene families
+  dominate any Chronos vector; a Names/Aliases-only term is weaker evidence;
+  a query failing `codep_query_quality()` should not be reported) plus any
+  run-specific ones passed in.
+- `genetea_write_table(path, table, headers=None)` and `genetea_markdown_table`
+  — CSV and markdown rendering shared by the writer, usable standalone.
+
+Runs land in `results/depmap_genetea/<slug>/`, a sibling of the loose
+calibration-benchmark files already in that topic directory (which predate
+this writer). This is for an analysis run against a real query — the
+calibration fixtures this skill ships beside `SKILL.md` (`calibration.png`,
+the `codependency_*` CSVs) document a threshold this skill applies and stay
+with the skill, per `coding-standards`' fixture exception.
+
 ## What calibrated the thresholds
 
 Every number here is read from a file in this directory and shown in

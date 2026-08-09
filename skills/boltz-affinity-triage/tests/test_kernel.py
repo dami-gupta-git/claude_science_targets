@@ -8,6 +8,7 @@ layout, and knowledge-base rows are literal dicts shaped like ChEMBL and
 BindingDB responses. Tests that need RDKit skip cleanly without it, and the
 regex fallback path is exercised either way.
 """
+import csv
 import importlib.util
 import json
 import os
@@ -728,3 +729,258 @@ def test_genuine_separation_passes_the_gate():
     neg = [k.kba_pactivity(r)[0] for r in decoys]
     g = k.kba_gate(k.kba_auc(pos, neg), len(pos), len(neg), null_auc=0.50)
     assert g["pass"] and g["auc"] == 1.0
+
+
+# --------------------------------------------------------------------------
+# Run outputs
+# --------------------------------------------------------------------------
+
+PASSING_GATE = {"pass": True, "auc": 0.82, "null_auc": 0.51, "n_pos": 8,
+                "n_neg": 8, "reasons": [], "verdict": "interpretable"}
+FAILING_GATE = {"pass": False, "auc": 0.97, "null_auc": 0.96, "n_pos": 8,
+                "n_neg": 8, "verdict": "not interpretable",
+                "reasons": ["control AUC 0.97 does not clear size-only null 0.96"]}
+
+
+def _controls(n=4):
+    rows = []
+    for i in range(n):
+        rows.append({"compound_id": f"A{i}", "role": "active", "smiles": "c1ccccc1O",
+                     "binder_score": 0.7 + 0.01 * i, "iptm": 0.8, "source": "chembl"})
+        rows.append({"compound_id": f"D{i}", "role": "decoy", "smiles": "c1ccccc1",
+                     "binder_score": 0.2 + 0.01 * i, "iptm": 0.7, "source": "chembl"})
+    return rows
+
+
+def _queries():
+    return [{"compound_id": "Q1", "smiles": "c1ccccc1N", "binder_score": 0.9, "iptm": 0.75},
+            {"compound_id": "Q2", "smiles": "c1ccccc1C", "binder_score": 0.1, "iptm": 0.31}]
+
+
+class TestRunDir:
+    def test_slugs_target_to_snake_case(self, tmp_path):
+        out = k.kba_run_dir("EGFR kinase-1", root=str(tmp_path))
+        assert out.endswith(os.path.join("boltz_affinity_triage", "egfr_kinase_1"))
+
+    def test_creates_scripts_subdirectory(self, tmp_path):
+        out = k.kba_run_dir("EGFR", root=str(tmp_path))
+        assert os.path.isdir(os.path.join(out, "scripts"))
+
+    def test_make_false_does_not_create(self, tmp_path):
+        out = k.kba_run_dir("EGFR", root=str(tmp_path), make=False)
+        assert not os.path.exists(out)
+
+    def test_empty_target_raises(self, tmp_path):
+        with pytest.raises(ValueError):
+            k.kba_run_dir("   ", root=str(tmp_path))
+
+
+class TestWriteTable:
+    def test_empty_rows_write_nothing(self, tmp_path):
+        assert k.kba_write_table(str(tmp_path / "x.csv"), []) is None
+        assert not (tmp_path / "x.csv").exists()
+
+    def test_none_becomes_empty_cell(self, tmp_path):
+        path = k.kba_write_table(str(tmp_path / "x.csv"),
+                                 [{"a": 1, "b": None}], ["a", "b"])
+        assert open(path).read().splitlines()[1] == "1,"
+
+    def test_extra_keys_are_kept_not_dropped(self, tmp_path):
+        path = k.kba_write_table(str(tmp_path / "x.csv"),
+                                 [{"a": 1, "zz": 2}], ["a"])
+        header = open(path).read().splitlines()[0]
+        assert header == "a,zz"
+
+    def test_headers_absent_from_rows_are_omitted(self, tmp_path):
+        path = k.kba_write_table(str(tmp_path / "x.csv"), [{"a": 1}], ["a", "b"])
+        assert open(path).read().splitlines()[0] == "a"
+
+
+class TestPoseFlags:
+    def test_low_iptm_is_flagged(self):
+        assert any("low pose confidence" in f
+                   for f in k.kba_pose_flags({"iptm": 0.3, "binder_score": 0.5}))
+
+    def test_iptm_at_floor_is_not_flagged(self):
+        assert k.kba_pose_flags({"iptm": k.IPTM_FLOOR, "binder_score": 0.5}) == []
+
+    def test_ptm_used_when_iptm_absent(self):
+        assert any("low pose confidence" in f
+                   for f in k.kba_pose_flags({"ptm": 0.2, "binder_score": 0.5}))
+
+    def test_missing_confidence_is_its_own_flag(self):
+        assert k.kba_pose_flags({"binder_score": 0.5}) == ["no pose confidence"]
+
+    def test_unscored_reason_is_carried_through(self):
+        flags = k.kba_pose_flags({"iptm": 0.9, "binder_score": None,
+                                  "unscored_reason": "sign undocumented"})
+        assert any("sign undocumented" in f for f in flags)
+
+
+class TestWriteRunGating:
+    def test_failing_gate_writes_no_ranked_table(self, tmp_path):
+        written = k.kba_write_run(str(tmp_path), "EGFR", FAILING_GATE, _controls(),
+                                  queries=_queries(), summary="Controls do not separate.")
+        assert "queries" not in written
+        assert not (tmp_path / k.QUERIES_CSV).exists()
+
+    def test_failing_gate_still_writes_controls_and_calibration(self, tmp_path):
+        k.kba_write_run(str(tmp_path), "EGFR", FAILING_GATE, _controls(),
+                        queries=_queries(), summary="Controls do not separate.")
+        assert (tmp_path / k.CONTROLS_CSV).exists()
+        assert (tmp_path / k.CALIBRATION_JSON).exists()
+
+    def test_failing_gate_readme_names_the_reasons(self, tmp_path):
+        k.kba_write_run(str(tmp_path), "EGFR", FAILING_GATE, _controls(),
+                        queries=_queries(), summary="Controls do not separate.")
+        text = (tmp_path / k.RUN_README).read_text()
+        assert "size-only null" in text and "Not reported" in text
+        assert "Q1" not in text
+
+    def test_passing_gate_writes_ranked_table(self, tmp_path):
+        written = k.kba_write_run(str(tmp_path), "EGFR", PASSING_GATE, _controls(),
+                                  queries=_queries(), summary="Controls separate.")
+        assert written["queries"].endswith(k.QUERIES_CSV)
+        assert "Q1" in (tmp_path / k.RUN_README).read_text()
+
+    def test_calibration_json_records_whether_ranking_was_written(self, tmp_path):
+        k.kba_write_run(str(tmp_path), "EGFR", FAILING_GATE, _controls(),
+                        queries=_queries(), summary="No separation.")
+        blob = json.loads((tmp_path / k.CALIBRATION_JSON).read_text())
+        assert blob["ranking_written"] is False
+        assert blob["n_queries"] == 2
+
+    def test_gate_must_be_a_gate_dict(self, tmp_path):
+        with pytest.raises(ValueError):
+            k.kba_write_run(str(tmp_path), "EGFR", {"auc": 0.9}, _controls(),
+                            summary="x")
+
+    def test_bad_control_role_raises_naming_the_compound(self, tmp_path):
+        rows = _controls()
+        rows[0]["role"] = "positive"
+        with pytest.raises(ValueError, match="A0"):
+            k.kba_write_run(str(tmp_path), "EGFR", PASSING_GATE, rows, summary="x")
+
+
+class TestWriteRunEnrichment:
+    def test_percentile_filled_from_control_distribution(self, tmp_path):
+        k.kba_write_run(str(tmp_path), "EGFR", PASSING_GATE, _controls(),
+                        queries=_queries(), summary="Controls separate.")
+        rows = list(csv.DictReader(open(tmp_path / k.QUERIES_CSV)))
+        by_id = {r["compound_id"]: r for r in rows}
+        assert float(by_id["Q1"]["control_percentile"]) == 100.0
+        assert float(by_id["Q2"]["control_percentile"]) == 0.0
+
+    def test_caller_supplied_percentile_is_not_overwritten(self, tmp_path):
+        queries = _queries()
+        queries[0]["control_percentile"] = 42.0
+        k.kba_write_run(str(tmp_path), "EGFR", PASSING_GATE, _controls(),
+                        queries=queries, summary="Controls separate.")
+        rows = {r["compound_id"]: r for r in csv.DictReader(open(tmp_path / k.QUERIES_CSV))}
+        assert float(rows["Q1"]["control_percentile"]) == 42.0
+
+    def test_low_confidence_query_is_flagged_in_the_table(self, tmp_path):
+        k.kba_write_run(str(tmp_path), "EGFR", PASSING_GATE, _controls(),
+                        queries=_queries(), summary="Controls separate.")
+        rows = {r["compound_id"]: r for r in csv.DictReader(open(tmp_path / k.QUERIES_CSV))}
+        assert "low pose confidence" in rows["Q2"]["flags"]
+        assert rows["Q1"]["flags"] == ""
+
+    def test_skipped_compounds_reach_readme_and_calibration(self, tmp_path):
+        k.kba_write_run(str(tmp_path), "EGFR", PASSING_GATE, _controls(),
+                        queries=_queries(), summary="Controls separate.",
+                        skipped=["BIG-1"])
+        assert "BIG-1" in (tmp_path / k.RUN_README).read_text()
+        blob = json.loads((tmp_path / k.CALIBRATION_JSON).read_text())
+        assert blob["skipped_over_atom_cap"] == ["BIG-1"]
+
+    def test_scripts_are_copied_into_the_run(self, tmp_path):
+        src = tmp_path / "run_triage.py"
+        src.write_text("# analysis wiring\n")
+        out = tmp_path / "run"
+        k.kba_write_run(str(out), "EGFR", PASSING_GATE, _controls(),
+                        summary="Controls separate.", scripts=[str(src)])
+        assert (out / "scripts" / "run_triage.py").exists()
+
+
+class TestRunReadme:
+    def test_summary_over_cap_raises(self):
+        with pytest.raises(ValueError):
+            k.kba_run_readme("EGFR", PASSING_GATE,
+                             "word " * (k.SUMMARY_MAX_WORDS + 1), _controls())
+
+    def test_summary_at_cap_is_accepted(self):
+        text = k.kba_run_readme("EGFR", PASSING_GATE,
+                                "word " * k.SUMMARY_MAX_WORDS, _controls())
+        assert "## Result" in text
+
+    def test_bulleted_summary_raises(self):
+        with pytest.raises(ValueError):
+            k.kba_run_readme("EGFR", PASSING_GATE, "- a bullet", _controls())
+
+    def test_missing_summary_raises_rather_than_rendering_none(self):
+        # kba_write_run defaults summary=None; omitting it must raise here
+        # rather than the README literally saying "None" for its opening
+        # paragraph.
+        with pytest.raises(ValueError):
+            k.kba_run_readme("EGFR", PASSING_GATE, None, _controls())
+
+    def test_sections_are_present_and_ordered(self):
+        text = k.kba_run_readme("EGFR", PASSING_GATE, "Prose.", _controls(),
+                                queries=_queries(), data_sources=["ChEMBL v34"],
+                                limits=["One target."])
+        idx = [text.index(h) for h in ("## Result", "## Files", "## Data sources", "## Limits")]
+        assert idx == sorted(idx)
+
+    def test_potency_caveat_is_always_stated(self):
+        text = k.kba_run_readme("EGFR", PASSING_GATE, "Prose.", _controls())
+        assert "not a potency" in text or "not quoted as a measured affinity" in text
+
+    def test_margin_reported_when_both_aucs_present(self):
+        text = k.kba_run_readme("EGFR", PASSING_GATE, "Prose.", _controls())
+        assert "0.31" in text
+
+    def test_missing_null_auc_is_named_not_guessed(self):
+        gate = dict(PASSING_GATE, null_auc=None)
+        text = k.kba_run_readme("EGFR", gate, "Prose.", _controls())
+        assert "not computed" in text
+
+    def test_calibration_only_run_says_so(self):
+        text = k.kba_run_readme("EGFR", PASSING_GATE, "Prose.", _controls(), queries=None)
+        assert "calibration only" in text
+
+    def test_single_low_confidence_row_is_not_pluralised(self):
+        queries = [{"compound_id": "Q1", "binder_score": 0.5, "iptm": 0.2}]
+        text = k.kba_run_readme("EGFR", PASSING_GATE, "Prose.", _controls(), queries=queries)
+        assert "1 compound scored on a pose below" in text
+
+    def test_uncomputed_similarity_is_stated_not_implied(self):
+        queries = [{"compound_id": "Q1", "binder_score": 0.5, "iptm": 0.8,
+                    "nearest_tanimoto": None}]
+        text = k.kba_run_readme("EGFR", PASSING_GATE, "Prose.", _controls(), queries=queries)
+        assert "not computed" in text and "RDKit" in text
+
+    def test_similarity_note_absent_when_it_was_computed(self):
+        queries = [{"compound_id": "Q1", "binder_score": 0.5, "iptm": 0.8,
+                    "nearest_active": "A0", "nearest_tanimoto": 0.4}]
+        text = k.kba_run_readme("EGFR", PASSING_GATE, "Prose.", _controls(), queries=queries)
+        assert "RDKit" not in text
+
+
+class TestSimilarity:
+    def test_returns_none_without_rdkit_or_a_number_with_it(self):
+        sim = k.kba_tanimoto("c1ccccc1", "c1ccccc1")
+        assert sim is None if not HAVE_RDKIT else sim == pytest.approx(1.0)
+
+    @needs_rdkit
+    def test_nearest_active_picks_the_closest(self):
+        actives = [{"compound_id": "A", "smiles": "c1ccccc1"},
+                   {"compound_id": "B", "smiles": "CCCCCCCCCCN"}]
+        best_id, sim = k.kba_nearest_active("c1ccccc1C", actives)
+        assert best_id == "A" and sim > 0
+
+    def test_unparseable_smiles_gives_no_similarity(self):
+        assert k.kba_tanimoto("not-a-molecule", "c1ccccc1") is None
+
+    def test_nearest_active_on_empty_set(self):
+        assert k.kba_nearest_active("c1ccccc1", []) == (None, None)

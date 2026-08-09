@@ -40,6 +40,22 @@ for c in structure_caveats(res):
 Then hand `res["path"]` to `diffdock`, `boltz`, `proteinmpnn`, or a viewer
 (save it as an artifact — `.pdb`/`.cif` render in an interactive 3D viewer).
 
+To save the run instead of a one-off file (structure files, the ranked
+candidates table, the pocket-residues table, and a README whose Limits
+section is `structure_caveats()` verbatim), use `get_structure_to_results`,
+not `get_structure` — it saves into `results/protein_structure/<target>/`
+rather than the bare `structures/` default:
+
+```python
+res = get_structure_to_results("KRAS", summary="...",
+                               data_sources=["RCSB PDB"])
+res["run"]             # {name: path} for what get_structure_to_results wrote
+```
+
+Pass `with_site=True` to save a run built from `get_structure_with_site`
+instead, when the downstream step needs a pocket regardless of what the
+chosen entry has.
+
 ## Report the caveats — every time
 
 `structure_caveats(res)` is not optional polish. A returned file is *not* the

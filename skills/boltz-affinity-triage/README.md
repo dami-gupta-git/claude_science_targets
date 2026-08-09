@@ -7,20 +7,43 @@ do not bind, so a score alone does not indicate whether a run has discriminative
 power on the target in question. This skill retrieves known actives and
 property-matched decoys from ChEMBL, BindingDB and PubChem BioAssay, folds them
 alongside the query compounds under identical settings, and reports the ranking
-only when the controls separate. The mechanics of running the model are covered
-by the `boltz` and `chai1` skills; this skill supplies the experimental design
-around them.
+only when the controls separate. Each run writes a directory of result files
+with a README of its own. The mechanics of running the model are covered by the
+`boltz` and `chai1` skills; this skill supplies the experimental design around
+them.
 
 ## Contents
 
 - `SKILL.md` — the workflow: target resolution, control retrieval from each
-  knowledge base, decoy matching, batched co-folding, gating, and the report
-  format.
-- `kernel.py` — 13 helper functions, loaded into the Python kernel when the
+  knowledge base, decoy matching, batched co-folding, gating, writing the run
+  directory, and the report format.
+- `kernel.py` — 21 helper functions, loaded into the Python kernel when the
   skill loads.
-- `tests/test_kernel.py` — unit tests covering all 13 helpers. Run with
+- `tests/test_kernel.py` — unit tests covering all 21 helpers. Run with
   `pytest tests/ -q` from the skill directory; no GPU, network, or Boltz install
   is required, and the suite passes with or without RDKit.
+
+## Run outputs
+
+A run writes to `results/boltz_affinity_triage/<target>/`, one directory per
+target under a shared topic so that runs stay comparable. `kba_write_run`
+assembles it:
+
+| file | contents |
+| --- | --- |
+| `README.md` | the run report: calibration verdict, ranked queries, files, data sources, limits |
+| `calibration.json` | the `kba_gate` dict, AUC, size-only null AUC, EF@10%, leakage split, compounds skipped at the atom cap |
+| `controls.csv` | one row per control compound: knowledge-base activity, leakage flag, co-folding scores |
+| `ranked_queries.csv` | query compounds ranked by `binder_score`, written only when the gate passes |
+| `scripts/` | the target-specific wiring that produced the run |
+
+`ranked_queries.csv` is withheld on a failing gate rather than written with a
+caveat, because a file on disk outlives the message that accompanied it and a
+ranking from an uncalibrated run orders compounds by noise. `calibration.json`
+records `ranking_written: false` in that case, and the README states why the
+section is empty. Co-folding output — the YAMLs, the CIFs, the `out/` tree — is
+not copied into the run directory; the three files above carry everything the
+report rests on.
 
 ## Helpers
 
@@ -69,6 +92,32 @@ Scoring and gating:
   min_margin=0.1)` — returns a verdict of `interpretable` or
   `not interpretable` with the reasons, failing on too few controls, an AUC at
   chance, or an AUC that does not clear the size-only null by the margin.
+- `kba_tanimoto(smiles_a, smiles_b, radius=2, n_bits=2048)` — Morgan-fingerprint
+  similarity, or `None` when RDKit is absent or either SMILES does not parse.
+- `kba_nearest_active(smiles, actives)` — the closest known active to a query
+  compound as `(compound_id, tanimoto)`.
+- `kba_pose_flags(row, iptm_floor=None)` — the caveat strings for one scored
+  compound: pose confidence below the floor (0.5 when unset), confidence
+  absent, or no `binder_score` with the reason it could not be assigned.
+
+Run outputs:
+
+- `kba_run_dir(target, root='results', topic=None, make=True)` — the run
+  directory for one target, slugged to snake_case under the
+  `boltz_affinity_triage` topic, with `scripts/` created beside it.
+- `kba_write_table(path, rows, headers=None)` — CSV writer that keeps keys not
+  named in `headers` rather than dropping them; returns `None` for empty input.
+- `kba_markdown_table(rows, headers=None)` — the same rows rendered for the
+  README.
+- `kba_check_words(text, cap, label)` — raises when a README field exceeds its
+  word cap, naming the field and the count.
+- `kba_run_readme(target, gate, summary, controls, queries=None, files=(),
+  data_sources=(), limits=(), enrichment=None, leakage_split=None, skipped=(),
+  title=None)` — renders the run report, leading with the calibration verdict
+  and replacing the ranked table with the diagnostic when the gate fails.
+- `kba_write_run(out_dir, target, gate, controls, queries=None, summary=None,
+  ...)` — writes the whole run directory and returns `{name: path}`, filling in
+  query percentiles, nearest actives and pose flags from the controls.
 
 ## Calibration of the decoy-matching thresholds
 
@@ -130,6 +179,14 @@ discovery across Boltz versions, the direction of `binder_score`, the size-only
 null, and each of the gate's three failure modes. Threshold comparisons are
 tested at exactly-satisfied margins, where binary floating point places a
 difference such as `0.60 - 0.50` marginally below its nominal value.
+
+The output layer is tested against a temporary directory rather than a real
+run: the gate dicts and score rows are literals, so the suite covers what is
+written and what is withheld without a co-folding step. Inverting the gate check
+so that a ranking is always written, overwriting a caller-supplied percentile,
+moving the ipTM floor from exclusive to inclusive, dropping the control-role
+validation, removing the summary word cap, and discarding CSV columns not named
+in `headers` each fail exactly one test.
 
 Removing the `sorted()` call from the output-directory traversal does not change
 any result, because the sample is selected by rank rather than by traversal

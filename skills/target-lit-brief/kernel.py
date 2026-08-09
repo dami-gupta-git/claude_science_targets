@@ -28,7 +28,9 @@ filtering is therefore done against the abstract, after retrieval.
 import csv
 import html
 import json
+import os
 import re
+import shutil
 
 import pandas as pd
 
@@ -40,8 +42,23 @@ METADATA_CHUNK = 20
 # default equals SEARCH_MAX: recency must be re-derived from parsed dates, and
 # on-target screening removes some candidates, so the pool has to exceed the
 # target count. Raising it needs paging (see plan_fetch).
+#
+# The pool stays at 200 regardless of how few papers are asked for, because the
+# connector's ordering is unreliable across the whole result set rather than
+# just its tail: the first 100 of 200 held only 96-97 of the genuinely most
+# recent 100 (README ## Calibration). Searching and fetching metadata for the
+# full pool costs no LLM calls; the per-paper cost is screening, which
+# screen_relevance stops early instead.
 DEFAULT_OVERFETCH = 200
-DEFAULT_N_PAPERS = 100
+DEFAULT_N_PAPERS = 5
+
+# How far past the requested count to screen before giving up on filling it.
+# The measured off-target rate was 21% for USP1 (25 of 118) and 33% for WRN
+# (61 of 186), so screening twice the quota fills it in one batch in both
+# cases; the floor keeps a small run to a single batch. Raise the factor for a
+# symbol that is also an ordinary word, where most candidates are discarded.
+SCREEN_BATCH_FACTOR = 2
+SCREEN_BATCH_MIN = 20
 
 MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
           "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
@@ -204,14 +221,19 @@ def flatten_article(article):
 
 
 def rank_recent(articles, n_papers=None):
-    """Most recent ``n_papers`` records, newest first, de-duplicated by PMID.
+    """Records newest first, de-duplicated by PMID; ``n_papers`` truncates.
 
     Ranking is done on the parsed date rather than the order the connector
     returned, because that order disagrees with the dates in the same payload.
     PMID descending breaks ties, so same-day papers order deterministically.
     Records whose date is entirely unparseable sort last but are not dropped.
+
+    ``n_papers=None`` keeps the whole ranked pool, which is what the workflow
+    wants: screening runs down this list and discards off-target papers, so
+    truncating to the requested count here would leave the brief short by
+    however many of the top rows turned out not to be about the gene. Use
+    ``select_for_brief`` to cut to the count after screening.
     """
-    n_papers = DEFAULT_N_PAPERS if n_papers is None else int(n_papers)
     rows = [flatten_article(a) for a in articles]
 
     seen, unique = set(), []
@@ -227,10 +249,12 @@ def rank_recent(articles, n_papers=None):
         return (row["_date_key"], int(pmid) if pmid.isdigit() else 0)
 
     unique.sort(key=sort_key, reverse=True)
-    return unique[:n_papers]
+    if n_papers is None:
+        return unique
+    return unique[:int(n_papers)]
 
 
-def _resolve_host_llm():
+def resolve_host_llm():
     """Find ``host.llm`` whether this module was sidecar-loaded or imported.
 
     Loading the skill mirrors these names into the session globals, where
@@ -249,7 +273,7 @@ def _resolve_host_llm():
     return injected.llm
 
 
-def _batch_llm(prompts, llm=None, max_tokens=400, model=None):
+def batch_llm(prompts, llm=None, max_tokens=400, model=None):
     """Fan a list of prompts out to the LLM, returning text or None per slot.
 
     A failed slot yields None rather than raising, so one malformed abstract
@@ -258,7 +282,7 @@ def _batch_llm(prompts, llm=None, max_tokens=400, model=None):
     if not prompts:
         return []
     if llm is None:
-        llm = _resolve_host_llm()
+        llm = resolve_host_llm()
     requests = [{"prompt": p, "max_tokens": max_tokens} for p in prompts]
     if model:
         for request in requests:
@@ -273,13 +297,32 @@ def _batch_llm(prompts, llm=None, max_tokens=400, model=None):
     return out
 
 
-def screen_relevance(rows, symbol, gene_name="", llm=None):
+def screen_prompt(row, label):
+    return (
+        f"Gene symbol of interest: {label}\n\n"
+        f"Title: {row['title']}\n"
+        f"Abstract: {row['abstract'][:1500]}\n\n"
+        "Is this paper about that specific gene or its protein product? "
+        "Papers that merely use the symbol as an ordinary word, an acronym for "
+        "something else, or a different species' unrelated gene are NOT about it.\n"
+        "Answer with exactly one word: YES or NO.")
+
+
+def screen_relevance(rows, symbol, gene_name="", llm=None, target_n=None,
+                     batch_factor=None, batch_min=None):
     """Mark which rows are actually about the gene, judged from the abstract.
 
     Needed because a symbol that is also an English word retrieves mostly
     unrelated papers, and no query-side qualifier separates the two cases
-    reliably. Sets ``on_target`` (bool) and ``screen_note`` on every row and
-    returns the same list.
+    reliably. Sets ``on_target`` (bool) and ``screen_note`` on the rows it
+    judged and returns the same list.
+
+    ``target_n`` screens in batches down the date-ranked list and stops once
+    that many on-target papers have been found, leaving the rest of the pool
+    untouched. The pool is over-fetched to 200 because the connector's ordering
+    cannot be trusted, but a 10-paper brief does not need 200 screening calls
+    to fill; rows past the stopping point carry no ``screen_note`` and are
+    excluded from the screening counts. Pass ``None`` to screen everything.
 
     A row the model did not judge is kept (``on_target=True``,
     ``screen_note="unscreened"``) so an LLM failure degrades to the unfiltered
@@ -287,33 +330,57 @@ def screen_relevance(rows, symbol, gene_name="", llm=None):
     """
     if not rows:
         return rows
+    # Coalesced here rather than defaulted in the signature: the kernel.py
+    # sidecar loader rejects a non-literal default, and an explicit `is None`
+    # check is also what keeps an intentional 0 from being overwritten.
+    batch_factor = SCREEN_BATCH_FACTOR if batch_factor is None else batch_factor
+    batch_min = SCREEN_BATCH_MIN if batch_min is None else batch_min
+
     label = f"{symbol} ({gene_name})" if gene_name else symbol
-    prompts = [
-        f"Gene symbol of interest: {label}\n\n"
-        f"Title: {row['title']}\n"
-        f"Abstract: {row['abstract'][:1500]}\n\n"
-        "Is this paper about that specific gene or its protein product? "
-        "Papers that merely use the symbol as an ordinary word, an acronym for "
-        "something else, or a different species' unrelated gene are NOT about it.\n"
-        "Answer with exactly one word: YES or NO."
-        for row in rows
-    ]
-    for row, reply in zip(rows, _batch_llm(prompts, llm=llm, max_tokens=5)):
-        if reply is None:
-            row["on_target"] = True
-            row["screen_note"] = "unscreened"
-            continue
-        verdict = re.search(r"\b(yes|no)\b", reply.strip().lower())
-        if verdict is None:
-            row["on_target"] = True
-            row["screen_note"] = "unscreened"
-        else:
-            row["on_target"] = verdict.group(1) == "yes"
-            row["screen_note"] = "screened"
+    if target_n is None:
+        batch = len(rows)
+    else:
+        batch = max(int(batch_min), int(target_n) * int(batch_factor))
+
+    kept = 0
+    index = 0
+    while index < len(rows):
+        chunk = rows[index:index + batch]
+        prompts = [screen_prompt(row, label) for row in chunk]
+        for row, reply in zip(chunk, batch_llm(prompts, llm=llm, max_tokens=5)):
+            verdict = None if reply is None else re.search(r"\b(yes|no)\b", reply.strip().lower())
+            if verdict is None:
+                row["on_target"] = True
+                row["screen_note"] = "unscreened"
+            else:
+                row["on_target"] = verdict.group(1) == "yes"
+                row["screen_note"] = "screened"
+            kept += bool(row["on_target"])
+        index += len(chunk)
+        if target_n is not None and kept >= int(target_n):
+            break
     return rows
 
 
-def _parse_summary_reply(text):
+def select_for_brief(rows, n_papers=None):
+    """The on-target rows that go into the brief, newest first.
+
+    Inclusion requires ``screen_note``, not just a truthy ``on_target``: an
+    unexamined paper is not evidence that it belongs. Rows the screen never
+    reached carry neither field, but a pool merged across two paged fetches can
+    carry an ``on_target`` set elsewhere, and that must not be read as a
+    verdict this screen produced.
+
+    Truncation to ``n_papers`` happens after screening rather than before, so
+    off-target papers near the top of the date ranking do not eat into the
+    count.
+    """
+    n_papers = DEFAULT_N_PAPERS if n_papers is None else int(n_papers)
+    on_target = [r for r in rows if r.get("screen_note") and r.get("on_target")]
+    return on_target[:n_papers]
+
+
+def parse_summary_reply(text):
     """Pull ``{category, summary}`` out of a model reply, tolerating fences."""
     if not text:
         return None
@@ -356,8 +423,8 @@ def summarize_papers(rows, symbol, gene_name="", llm=None, model=None):
         'Reply with only JSON: {"category": "...", "summary": "..."}'
         for row in rows
     ]
-    for row, reply in zip(rows, _batch_llm(prompts, llm=llm, max_tokens=250, model=model)):
-        parsed = _parse_summary_reply(reply)
+    for row, reply in zip(rows, batch_llm(prompts, llm=llm, max_tokens=250, model=model)):
+        parsed = parse_summary_reply(reply)
         if parsed is None:
             row["category"] = "other"
             row["summary"] = ""
@@ -413,6 +480,102 @@ def coverage_stats(all_rows, kept_rows):
     }
 
 
+# One or more PMIDs inside a single parenthetical. The models write these both
+# ways within one brief -- "(PMID 123, PMID 456)" repeating the prefix and
+# "(PMID 123, 456)" not -- so the prefix has to be optional on every id after
+# the first. Matched as a whole group so a multi-citation parenthetical
+# collapses to one bracket rather than leaving stray commas behind.
+#
+# Held as pattern strings rather than compiled objects because the kernel.py
+# sidecar loader rejects any top-level call, `re.compile` included; they are
+# compiled inside renumber_citations.
+CITATION_GROUP = r"\(\s*PMIDs?[\s:]*\d+(?:\s*[,;]\s*(?:PMIDs?[\s:]*)?\d+)*\s*\)"
+PMID_IN_GROUP = r"\d+"
+
+# A single citation anywhere else, for parentheticals carrying prose between
+# the ids -- "(PMID 38587317, correction at PMID 38961306)" appears in the WRN
+# brief and matches no whole-group pattern. Converting these individually keeps
+# the prose. Requiring the digits is what keeps the word "PMID" in ordinary
+# prose ("one row per paper: PMID, date, journal") from being rewritten.
+CITATION_SINGLE = r"\bPMIDs?[\s:]*(\d+)"
+
+PUBMED_URL = "https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+
+
+def renumber_citations(text, rows):
+    """Inline ``(PMID 123)`` citations to ``[1]`` markers plus a reference list.
+
+    The numbering is done here rather than asked of the model: a model
+    numbering its own references has to hold the whole mapping while writing
+    prose, and a mis-numbered citation points at the wrong paper without
+    looking wrong. Numbers are assigned in order of first appearance, so the
+    reference list reads in the order the brief cites it.
+
+    Returns ``(text, references, unknown)``. ``references`` is a list of dicts
+    carrying the citation number and the row it refers to. ``unknown`` holds
+    any PMID cited but absent from ``rows`` — the synthesis prompt forbids
+    those, so a non-empty list means the model invented a citation and the
+    caller must report it rather than let it render as a valid-looking number.
+    """
+    group_re = re.compile(CITATION_GROUP, re.IGNORECASE)
+    single_re = re.compile(CITATION_SINGLE, re.IGNORECASE)
+    pmid_re = re.compile(PMID_IN_GROUP)
+
+    by_pmid = {str(r.get("pmid")): r for r in rows if r.get("pmid")}
+    order = []
+    unknown = []
+
+    def assign(pmid):
+        if pmid not in order:
+            order.append(pmid)
+        return order.index(pmid) + 1
+
+    def replace(match):
+        pmids = pmid_re.findall(match.group(0))
+        known = [p for p in pmids if p in by_pmid]
+        for pmid in pmids:
+            if pmid not in by_pmid and pmid not in unknown:
+                unknown.append(pmid)
+        if not known:
+            return match.group(0)
+        return "[" + ", ".join(str(assign(p)) for p in known) + "]"
+
+    def replace_single(match):
+        pmid = match.group(1)
+        if pmid not in by_pmid:
+            if pmid not in unknown:
+                unknown.append(pmid)
+            return match.group(0)
+        return f"[{assign(pmid)}]"
+
+    new_text = group_re.sub(replace, text)
+    new_text = single_re.sub(replace_single, new_text)
+    references = [{"n": i + 1, "pmid": pmid, **by_pmid[pmid]}
+                  for i, pmid in enumerate(order)]
+    return new_text, references, unknown
+
+
+def format_references(references):
+    """The reference list as markdown: number, authors, journal, date, link.
+
+    Each entry links to PubMed so a reader can open the paper from the brief;
+    the DOI is included where the record carried one.
+    """
+    lines = []
+    for ref in references:
+        author = ref.get("first_author") or ""
+        author = f"{author} et al. " if author and ref.get("n_authors", 0) > 1 else (
+            f"{author}. " if author else "")
+        journal = ref.get("journal") or ""
+        date = ref.get("date") or ""
+        bits = " ".join(b for b in [journal, date] if b)
+        doi = f" doi:{ref['doi']}" if ref.get("doi") else ""
+        lines.append(
+            f"{ref['n']}. {author}{ref.get('title', '').rstrip('.')}. "
+            f"{bits}. [PMID {ref['pmid']}]({PUBMED_URL.format(pmid=ref['pmid'])}){doi}")
+    return "\n".join(lines)
+
+
 def synthesis_prompt(rows, symbol, gene_name="", stats=None):
     """Build the prompt for the cross-paper synthesis.
 
@@ -437,26 +600,65 @@ def synthesis_prompt(rows, symbol, gene_name="", stats=None):
         f"You are writing a target-triage literature brief on {label}, based on "
         f"the {len(rows)} most recent PubMed papers about it{span}.\n\n"
         f"{body}\n\n"
-        "Write a brief in markdown with these sections:\n"
-        "1. `## What changed` -- 3-5 sentences on the most consequential recent "
-        "findings for this target. Lead with substance, not volume.\n"
-        "2. `## By theme` -- one short subsection per category present, "
-        "summarising what that body of work establishes.\n"
-        "3. `## Open questions` -- 3-5 bullets naming what the recent "
-        "literature does not settle.\n\n"
+        "READER: a scientist who knows basic genetics and drug discovery but "
+        "does not work on this target. They know what a gene knockout, a cell "
+        "line and a clinical phase are. They do not know this protein's "
+        "substrates, the named compounds, or the field's abbreviations.\n\n"
+        "Write a brief in markdown with these sections:\n\n"
+        "1. `## Overview` -- 3-5 sentences of plain prose, no citations, no "
+        "bullets. State what this target is, what it does in the cell, and the "
+        "single most important thing the recent papers add. A reader who stops "
+        "here should still know where the target stands.\n"
+        "2. `## What changed` -- 3-6 bullets, one development each, most "
+        "consequential first. Start each bullet with a short bold phrase naming "
+        "the development, then one or two sentences of explanation.\n"
+        "3. `## By theme` -- one `###` subsection per category present. Open "
+        "each with a single plain-language sentence saying what this body of "
+        "work establishes, then 2-5 bullets of specifics. Do not write a "
+        "subsection as one long paragraph.\n"
+        "4. `## Open questions` -- 3-5 bullets naming what the recent "
+        "literature does not settle. One question per bullet.\n\n"
+        "STYLE RULES, which matter as much as the content:\n"
+        "- Sentences under about 25 words. One idea per sentence.\n"
+        "- No paragraph longer than 4 sentences anywhere in the document.\n"
+        "- At most 3 citations per bullet. If more papers support a point, say "
+        "how many and cite the clearest examples.\n"
+        "- Spell out a specialist term the first time it appears, in a clause: "
+        "'synthetic lethal (the combination kills, either alone does not)'.\n"
+        "- Do not stack findings into a list separated by semicolons. Give each "
+        "its own bullet.\n\n"
         "Cite every specific claim with its PMID inline, e.g. (PMID 12345678). "
-        "Only cite PMIDs from the list above. Do not invent findings, and where "
-        "the papers disagree, say so. Write descriptively; do not editorialise "
-        "about how exciting or promising the target is."
+        "Only cite PMIDs from the list above -- a PMID that is not in the list "
+        "will be flagged as invented and the brief rejected. Do not invent "
+        "findings, and where the papers disagree, say so. Write descriptively; "
+        "do not editorialise about how exciting or promising the target is."
     )
 
 
-def write_brief(path, symbol, synthesis_text, stats, gene_name="", query=""):
-    """Assemble the markdown brief: provenance header, synthesis, method note."""
+def write_brief(path, symbol, synthesis_text, stats, gene_name="", query="",
+                rows=None):
+    """Assemble the markdown brief: header, synthesis, references, method note.
+
+    ``rows`` are the papers the synthesis was written from. When given, inline
+    ``(PMID ...)`` citations are converted to ``[n]`` markers and a numbered
+    reference list is appended, which keeps eight-digit ids out of the prose.
+    Omitting ``rows`` leaves the citations inline.
+
+    A cited PMID absent from ``rows`` is reported in the method note rather
+    than silently dropped: the synthesis prompt forbids outside citations, so
+    one appearing means the model invented it and the reader needs to know
+    which claim is unsupported.
+    """
     label = f"{symbol} -- {gene_name}" if gene_name else symbol
     span = "unknown"
     if stats.get("date_oldest"):
         span = f"{stats['date_oldest']} to {stats['date_newest']}"
+
+    body = synthesis_text.strip()
+    references, unknown = [], []
+    if rows:
+        body, references, unknown = renumber_citations(body, rows)
+
     lines = [
         f"# {label}: recent literature brief",
         "",
@@ -465,20 +667,90 @@ def write_brief(path, symbol, synthesis_text, stats, gene_name="", query=""):
         f"{stats['n_off_target']} of {stats['n_screened']} screened were judged "
         "not to be about this gene and excluded.",
         "",
-        synthesis_text.strip(),
+        body,
         "",
+    ]
+    if references:
+        lines += ["## References", "", format_references(references), ""]
+    lines += [
         "## Method",
         "",
         f"- Query: `{query}`",
-        f"- Ranked by parsed publication date, newest first; the connector's own "
-        f"`sort=pub_date` order disagrees with the dates it returns and is not relied on.",
-        f"- Off-target papers removed by abstract-level screening against the gene identity.",
+        "- Ranked by parsed publication date, newest first; the connector's own "
+        "`sort=pub_date` order disagrees with the dates it returns and is not relied on.",
+        "- Off-target papers removed by abstract-level screening against the gene identity.",
     ]
     if stats.get("n_unsummarized"):
         lines.append(f"- {stats['n_unsummarized']} paper(s) could not be summarised "
                      "and carry an empty summary.")
+    if unknown:
+        lines.append(
+            f"- {len(unknown)} cited PMID(s) are not in the retrieved set and are "
+            f"left inline unverified: {', '.join(unknown)}. Treat the claims "
+            "carrying them as unsupported.")
     lines.append("")
     text = "\n".join(lines)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
     return text
+
+
+# --------------------------------------------------------------------------
+# Run output: results/<topic>/<run>/
+# --------------------------------------------------------------------------
+RESULTS_TOPIC = "target_lit_brief"
+
+
+def brief_run_dir(symbol, root="results", topic=None, make=True):
+    """Path for one brief: <root>/<topic>/<slug>/, with scripts/ beside it.
+
+    `symbol` is the gene the brief covers; slugged to snake_case because
+    result directories are named that way and a raw symbol may carry case
+    (the existing runs use lowercase, e.g. `results/target_lit_brief/usp1/`).
+
+    `topic` defaults to RESULTS_TOPIC through an explicit None check rather
+    than in the signature: the kernel.py sidecar loader rejects a non-literal
+    default, and a rejected file defines none of this module's helpers —
+    the same defect fixed in depmap-fusion's fusion_run_dir.
+    """
+    topic = RESULTS_TOPIC if topic is None else topic
+    slug = re.sub(r"[^a-z0-9]+", "_", str(symbol).strip().lower()).strip("_")
+    if not slug:
+        raise ValueError("brief_run_dir got an empty symbol; the run "
+                         "directory is named after the gene")
+    out_dir = os.path.join(root, topic, slug)
+    if make:
+        os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    return out_dir
+
+
+def brief_write_run(out_dir, symbol, kept_rows, synthesis_text, stats,
+                    gene_name="", query="", scripts=()):
+    """Write one brief run directory. Returns {name: path} for what was written.
+
+    Wraps the two existing writers — `write_paper_table` (the per-paper CSV,
+    named `<symbol>_recent_papers.csv` to match the existing runs in
+    `results/target_lit_brief/`) and `write_brief` (the README itself, with
+    `kept_rows` passed through so citations get renumbered) — and copies
+    `scripts` into `scripts/`. Does not change what either writer produces;
+    only computes where they write.
+    """
+    os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    slug = os.path.basename(out_dir.rstrip(os.sep))
+    written = {}
+
+    table_path = os.path.join(out_dir, f"{slug}_recent_papers.csv")
+    write_paper_table(kept_rows, table_path)
+    written["table"] = table_path
+
+    readme_path = os.path.join(out_dir, "README.md")
+    write_brief(readme_path, symbol, synthesis_text, stats,
+               gene_name=gene_name, query=query, rows=kept_rows)
+    written["readme"] = readme_path
+
+    for src in scripts:
+        dst = os.path.join(out_dir, "scripts", os.path.basename(src))
+        shutil.copyfile(src, dst)
+        written.setdefault("scripts", []).append(dst)
+
+    return written

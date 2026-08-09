@@ -6,6 +6,11 @@ candidate pool. These helpers supply the two things that p-value is missing: the
 distribution of the SAME contrast over every other eligible stratum, and a check
 that the stratum is not globally shifted on unrelated genes.
 """
+import csv
+import os
+import re
+import shutil
+
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -156,6 +161,112 @@ def rank_in_null(scan, marker):
             "fraction_more_extreme": float((row.d < hit.d).mean())}
 
 
+DELETION_CUT = 0.25
+# Containment above which two deletion markers are treated as one event rather
+# than as rival hypotheses. Calibrated on the MTAP/9p21 case: genuine
+# neighbours score 0.82-1.00 and the nearest independent marker scores well
+# below, so 0.7 separates them with margin on both sides. Re-derive by listing
+# containment for a known co-deleted locus and cutting below its minimum.
+CODELETION_MIN_OVERLAP = 0.7
+
+
+def deletion_marker_matrix(cn_frame, cut=None):
+    """Boolean deletion calls from a relative copy-number matrix.
+
+    A gene lost by deletion carries no damaging mutation, so it is absent from a
+    mutation matrix entirely and `marker_null_scan` over mutations cannot rank
+    it. Copy-number markers need their null built from deletions instead.
+
+    `cut` defaults to DELETION_CUT (0.25), a homozygous-loss threshold on DepMap
+    relative copy number. Validate it per release against the deleted gene's own
+    knockout effect: if the gene is truly absent, knocking it out does nothing
+    (MTAP scores +0.125 in called-deleted lines against -0.001 elsewhere).
+    """
+    if cut is None:
+        cut = DELETION_CUT
+    numeric = cn_frame.apply(pd.to_numeric, errors="coerce")
+    called = numeric < cut
+    measured = numeric.notna()
+    n_measured = int(measured.to_numpy().sum())
+    if n_measured == 0:
+        raise ValueError("no numeric copy-number values in cn_frame")
+    fraction = int((called & measured).to_numpy().sum()) / n_measured
+    # Both degenerate outcomes indicate the wrong input scale rather than an
+    # unusual panel: log2 ratios centre on 0 and call everything deleted, while
+    # absolute integer copy number never falls below a relative-scale cut.
+    if fraction == 0.0 or fraction > 0.5:
+        raise ValueError(
+            f"cut={cut} calls {fraction:.0%} of measured values deleted, which is "
+            "degenerate; check that the frame holds RELATIVE copy number "
+            "(1.0 = diploid) rather than log2 ratios or absolute copy number")
+    return called
+
+
+def codeletion_partners(marker_matrix, marker, min_overlap=None):
+    """Markers whose positive samples largely coincide with `marker`'s.
+
+    A deletion removes a contiguous stretch of chromosome, so genes in that
+    stretch carry near-identical marker columns and score near-identical
+    contrasts. Those neighbours are not independent tests and not competing
+    hypotheses -- they are the same event seen through adjacent genes.
+
+    Overlap is ASYMMETRIC CONTAINMENT -- the larger of the two conditional
+    fractions -- not Jaccard and not correlation. Deletions at one locus vary in
+    extent between samples, so a narrow deletion is typically NESTED inside a
+    broader one rather than coextensive with it, and Jaccard punishes that size
+    asymmetry until real neighbours drop out. On the worked MTAP case the eleven
+    9p21 neighbours score containment 0.82-1.00 but Jaccard only 0.09-0.39, so a
+    Jaccard rule at any usable threshold reports them as independent rivals --
+    exactly the error this function exists to prevent. Correlation fails for the
+    separate reason that the agreeing-negative majority dominates it.
+
+    Returns a DataFrame sorted by descending overlap.
+    """
+    if min_overlap is None:
+        min_overlap = CODELETION_MIN_OVERLAP
+    if marker not in marker_matrix.columns:
+        raise KeyError(f"{marker!r} is not a column of marker_matrix")
+    focal = marker_matrix[marker] != 0
+    n_focal = int(focal.sum())
+    if n_focal == 0:
+        raise ValueError(f"{marker!r} is positive in no sample; nothing to compare")
+    others = marker_matrix.drop(columns=[marker]) != 0
+    n_other = others.sum()
+    intersection = others.loc[focal].sum()
+    containment = pd.concat([intersection / n_other.replace(0, np.nan),
+                             intersection / n_focal], axis=1).max(axis=1).dropna()
+    partners = containment[containment >= min_overlap].sort_values(ascending=False)
+    return pd.DataFrame({"marker": partners.index, "overlap": partners.values,
+                         "n_shared": intersection.reindex(partners.index).values,
+                         "n_marker": n_other.reindex(partners.index).values})
+
+
+def neighbourhood_check(scan, marker_matrix, marker, min_overlap=None):
+    """Are the markers outranking `marker` the same deletion event, or rivals?
+
+    `rank_in_null` alone is misleading for a copy-number marker: eleven markers
+    beating MTAP reads as a weak hypothesis, but all eleven were 9p21 genes
+    carried by the MTAP deletion itself, so the rank reflects ONE locus rather
+    than eleven competing ones. `independent_above` is the number that answers
+    the multiplicity question; `rank_by_d` is not.
+
+    Returns the counts plus the outranking markers split into co-deleted
+    partners and independent ones.
+    """
+    hit = rank_in_null(scan, marker)
+    above = scan.reset_index(drop=True).iloc[: hit["rank_by_d"] - 1]
+    partners = set(codeletion_partners(marker_matrix, marker,
+                                       min_overlap=min_overlap)["marker"])
+    codeleted = [m for m in above.marker if m in partners]
+    independent = [m for m in above.marker if m not in partners]
+    return {"marker": marker, "rank_by_d": hit["rank_by_d"],
+            "n_markers": hit["n_markers"], "n_above": len(above),
+            "codeleted_above": codeleted, "independent_above": independent,
+            "n_codeleted_above": len(codeleted),
+            "n_independent_above": len(independent),
+            "d": hit["d"], "q": hit["q"]}
+
+
 def global_shift_control(sample_means, flags, alternative="less"):
     """Is the focal stratum shifted on unrelated genes too?
 
@@ -201,3 +312,251 @@ def sample_gene_means(read_matrix_fn, gene_names, kind="effect", n_genes=600,
     rng = random.Random(seed)
     block, _ = read_matrix_fn(kind, rng.sample(pool, n_genes))
     return block.mean(axis=1)
+
+
+# --------------------------------------------------------------------------
+# Run output: results/<topic>/<run>/
+# --------------------------------------------------------------------------
+#
+# This skill is invoked both standalone (a fresh biomarker hypothesis to
+# check) and from inside another skill's run (the USP1 triage run's controls
+# stayed in that run's own results/target_triage/usp1/scripts/, per
+# coding-standards). The writer below is for the standalone case, under its
+# own topic, so a caller does not have to hand-build the path each time.
+RESULTS_TOPIC = "marker_contrast_null"
+SCAN_CSV = "null_scan.csv"
+SPECIFICITY_CSV = "gene_specificity.csv"
+RUN_README = "README.md"
+SUMMARY_MAX_WORDS = 130
+
+# Restated from this file's SKILL.md so every run states the same standing
+# caveats rather than a hand-picked subset that can drift from the skill as
+# it is revised.
+STANDING_LIMITS = (
+    "The null tests whether a marker stands out among markers; it does not "
+    "test whether the underlying biology is real.",
+    "A small focal arm powers only a large |d|, so 'not distinguishable from "
+    "selection noise' is a weaker claim than 'no effect' — report which one "
+    "the data support.",
+    "Damaging-mutation calls are not functional pathway loss: promoter "
+    "hypermethylation, reversion and structural events are invisible to a "
+    "mutation matrix, so a null result may reflect stratum misassignment "
+    "rather than absent dependency.",
+    "Markers whose carriers largely coincide (e.g. co-deleted neighbours) are "
+    "not independent tests, which makes the BH correction conservative here.",
+)
+
+
+def mcn_run_dir(name, root="results", topic=None, make=True):
+    """Path for one contrast run: <root>/<topic>/<slug>/, with scripts/ beside it.
+
+    `name` identifies the contrast tested (e.g. "USP1 in BRCA1-mutant lines"),
+    not the marker alone, since the same marker can be scanned against several
+    measurements. Slugged to snake_case because result directories are named
+    that way and a free-text name may carry spaces or punctuation.
+
+    `topic` defaults to RESULTS_TOPIC through an explicit None check rather
+    than in the signature: the kernel.py sidecar loader rejects a non-literal
+    default, and a rejected file defines none of this module's helpers.
+    """
+    topic = RESULTS_TOPIC if topic is None else topic
+    slug = re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
+    if not slug:
+        raise ValueError("mcn_run_dir got an empty name; the run directory is "
+                         "named after the contrast tested")
+    out_dir = os.path.join(root, topic, slug)
+    if make:
+        os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    return out_dir
+
+
+def mcn_write_table(path, rows, headers=None):
+    """Write rows (list of dicts, or a DataFrame) to CSV. Returns the path, or
+    None if empty.
+
+    Columns are `headers` first, then any further keys present in the rows in
+    sorted order, so a field beyond the usual scan columns is written rather
+    than dropped.
+    """
+    if hasattr(rows, "to_dict"):
+        rows = rows.to_dict("records")
+    rows = [dict(r) for r in (rows or [])]
+    if not rows:
+        return None
+    headers = list(headers or [])
+    extra = sorted({k for r in rows for k in r} - set(headers))
+    cols = [c for c in headers if any(c in r for r in rows)] + extra
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({c: ("" if row.get(c) is None else row.get(c))
+                             for c in cols})
+    return path
+
+
+def mcn_check_words(text, cap, label):
+    """Enforce a word cap on run-README prose, naming the count and the cap."""
+    n = len(str(text or "").split())
+    if n > cap:
+        raise ValueError(
+            f"{label} is {n} words; cap is {cap}. Move detail into the table "
+            "rather than the prose.")
+    return n
+
+
+def mcn_verdict(rank, global_shift=None, q_floor=0.05):
+    """Does the contrast survive the null-scan and global-shift controls?
+
+    A marker "survives" only when its BH q in the null scan clears `q_floor`
+    AND (when a global-shift control was run) the stratum is not globally
+    shifted on unrelated genes — either failure alone is enough to explain the
+    raw contrast without invoking the target gene. Returns a dict with the
+    verdict and the reason, so `mcn_run_readme` states a plain conclusion
+    rather than leaving the reader to weigh four numbers themselves.
+    """
+    reasons = []
+    if rank["q"] >= q_floor:
+        reasons.append(
+            f"{rank['marker']} ranks {rank['rank_by_d']} of {rank['n_markers']} "
+            f"markers ({rank['percentile']:.1f}th percentile) with BH q = "
+            f"{rank['q']:.3g}, at or above the {q_floor} floor — "
+            f"{rank['n_markers_q_below_05']} marker(s) in the whole scan clear "
+            "q < 0.05.")
+    if global_shift is not None and global_shift.get("global_shift"):
+        reasons.append(
+            f"the focal stratum is globally shifted on unrelated genes "
+            f"(p = {global_shift['p']:.3g}), so a single-gene difference "
+            "carries no target-specific information.")
+    survives = not reasons
+    return {"survives": survives, "reasons": reasons}
+
+
+def mcn_run_readme(name, contrast, rank, global_shift=None, specificity=None,
+                   neighbourhood=None, summary=None, files=(),
+                   data_sources=(), limits=(), title=None):
+    """Render the run README for one contrast. Returns markdown text.
+
+    `contrast` is a stratum_contrast() dict, `rank` a rank_in_null() dict —
+    both required, since a rank with no contrast to explain (or vice versa) is
+    half the finding. `global_shift`, `specificity` and `neighbourhood` are
+    optional, matching which of the three controls the caller actually ran.
+
+    Sections follow `coding-standards` (Result, Files, Data sources, Limits).
+    The Result section leads with mcn_verdict()'s plain survives/does-not-
+    survive statement, because that is this skill's actual deliverable — a
+    ranked table without a stated conclusion leaves the reader to redo the
+    judgement the skill exists to make.
+    """
+    if summary is None:
+        raise ValueError("mcn_run_readme needs a summary — the plain-prose "
+                         "paragraph a non-specialist reads first")
+    mcn_check_words(summary, SUMMARY_MAX_WORDS, "summary")
+    if str(summary).strip().startswith("-"):
+        raise ValueError("summary must be plain prose, not bullets")
+
+    verdict = mcn_verdict(rank, global_shift=global_shift)
+    marker = rank["marker"]
+
+    parts = [f"# {title or f'{name} — marker-contrast null'}", "",
+             str(summary).strip(), "", "## Result", ""]
+
+    headline = ("survives" if verdict["survives"] else "does not survive")
+    parts += [f"**{marker} {headline} the empirical-null and confounder "
+             "controls.**", ""]
+    parts += [
+        "| quantity | value |", "| --- | --- |",
+        f"| contrast | n={contrast['n_focal']} focal vs "
+        f"n={contrast['n_reference']} reference |",
+        f"| mean (focal / reference) | {contrast['mean_focal']:.4g} / "
+        f"{contrast['mean_reference']:.4g} |",
+        f"| Cohen's d | {contrast['d']:.3g} |",
+        f"| uncorrected p | {contrast['p']:.3g} |",
+        f"| rank in null | {rank['rank_by_d']} of {rank['n_markers']} "
+        f"({rank['percentile']:.1f}th percentile) |",
+        f"| BH q | {rank['q']:.3g} |",
+        f"| markers clearing q < 0.05 | {rank['n_markers_q_below_05']} |", ""]
+    if global_shift is not None:
+        parts += [f"| global shift on unrelated genes | "
+                 f"{'yes' if global_shift.get('global_shift') else 'no'} "
+                 f"(p = {global_shift['p']:.3g}) |", ""]
+    if not verdict["survives"]:
+        parts += ["The contrast does not survive because:"] + \
+                 [f"- {r}" for r in verdict["reasons"]] + [""]
+    if neighbourhood is not None:
+        parts += [f"Of the {neighbourhood['n_above']} marker(s) outranking "
+                 f"{marker}, {neighbourhood['n_codeleted_above']} are "
+                 f"co-deleted neighbours (the same event) and "
+                 f"{neighbourhood['n_independent_above']} are independent "
+                 "rivals.", ""]
+    if specificity is not None:
+        rows = specificity.to_dict("records") if hasattr(specificity, "to_dict") \
+            else list(specificity)
+        if rows:
+            parts += ["### Gene specificity", "",
+                     "| gene | d | p |", "| --- | --- | --- |"]
+            for r in rows:
+                parts.append(f"| {r['gene']} | {r['d']:.3g} | {r['p']:.3g} |")
+            parts += [""]
+
+    parts += ["## Files", ""]
+    for entry in files:
+        f_name, description = (entry["name"], entry["description"]) \
+            if isinstance(entry, dict) else entry
+        parts.append(f"- `{f_name}` — {description}")
+    parts += ["", "## Data sources", ""] + [f"- {s}" for s in data_sources]
+    parts += ["", "## Limits", ""]
+    parts += [f"- {s}" for s in list(STANDING_LIMITS) + list(limits)]
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def mcn_write_run(out_dir, name, contrast, rank, scan=None, global_shift=None,
+                  specificity=None, neighbourhood=None, summary=None,
+                  files=(), data_sources=(), limits=(), scripts=()):
+    """Write one contrast-check run directory. Returns {name: path} written.
+
+    Writes `null_scan.csv` (the full marker_null_scan() table, when given),
+    `gene_specificity.csv` (the gene_specificity_control() table, when given),
+    the run README, and copies `scripts` into `scripts/`.
+    """
+    os.makedirs(os.path.join(out_dir, "scripts"), exist_ok=True)
+    written = {}
+
+    scan_cols = ["marker", "n_focal", "n_reference", "mean_focal",
+                "mean_reference", "d", "p", "q"]
+    scan_path = mcn_write_table(os.path.join(out_dir, SCAN_CSV), scan, scan_cols)
+    if scan_path:
+        written["scan"] = scan_path
+
+    spec_cols = ["gene", "n_focal", "n_reference", "mean_focal",
+                "mean_reference", "d", "p"]
+    spec_path = mcn_write_table(os.path.join(out_dir, SPECIFICITY_CSV),
+                                specificity, spec_cols)
+    if spec_path:
+        written["specificity"] = spec_path
+
+    for src in scripts:
+        dst = os.path.join(out_dir, "scripts", os.path.basename(src))
+        shutil.copyfile(src, dst)
+        written.setdefault("scripts", []).append(dst)
+
+    listed = []
+    if "scan" in written:
+        listed.append((SCAN_CSV, "the full null scan: every eligible marker's "
+                                 "n, means, Cohen's d, p and BH q"))
+    if "specificity" in written:
+        listed.append((SPECIFICITY_CSV, "gene_specificity_control() rows: the "
+                                        "same contrast on pathway neighbours "
+                                        "and unrelated controls"))
+    listed += list(files)
+
+    readme = mcn_run_readme(name, contrast, rank, global_shift=global_shift,
+                            specificity=specificity, neighbourhood=neighbourhood,
+                            summary=summary, files=listed,
+                            data_sources=data_sources, limits=limits)
+    readme_path = os.path.join(out_dir, RUN_README)
+    with open(readme_path, "w", encoding="utf-8") as fh:
+        fh.write(readme)
+    written["readme"] = readme_path
+    return written

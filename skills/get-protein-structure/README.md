@@ -39,6 +39,36 @@ which residues the entry does not observe.
 - `structure_caveats(result)` — the properties of a result that affect downstream
   suitability, as reportable statements.
 
+### Saving a run
+
+- `get_structure_to_results(query, name=None, root="results",
+  topic="protein_structure", summary=None, with_site=False, ...)` —
+  `get_structure()` (or `get_structure_with_site()` with `with_site=True`),
+  routed into `results/protein_structure/<slug>/` instead of the bare
+  `structures/` default `get_structure` otherwise writes to, then saved as a
+  full run via `gps_write_run`. Returns the usual result dict with a `run`
+  key added.
+- `gps_run_dir(target, root="results", topic="protein_structure")` — the path
+  for one run, `<root>/<topic>/<slug>/`, with `scripts/` created beside it.
+- `gps_write_run(out_dir, name, result, summary=None, files=(),
+  data_sources=(), limits=(), scripts=())` — copies the structure file(s)
+  already on disk at `result["path"]`/`result["raw_path"]` into `out_dir`,
+  writes `ranked_structures.csv`, `pocket_residues.csv` (when a pocket was
+  found) and `coverage_gaps.csv` (when computed), the run README, and copies
+  `scripts` into `scripts/`. Returns the paths written. Raises if `result`
+  carries an `error`, before writing anything.
+- `gps_run_readme(name, result, summary, files=(), data_sources=(),
+  limits=(), title=None)` — renders the README text `gps_write_run` saves,
+  per `coding-standards`' Result/Files/Data sources/Limits structure. The
+  Limits section is `structure_caveats(result)` verbatim plus any
+  run-specific ones passed in — reusing the function this skill already
+  computes rather than restating its checks by hand.
+- `gps_write_table(path, rows, headers=None)` — CSV writer used by
+  `gps_write_run`, usable standalone.
+
+Runs land in `results/protein_structure/<slug>/`, the topic already used by
+the hand-written WRN and KRAS dossiers, so a new run is a sibling.
+
 ## Scope
 
 Structure prediction (`boltz`, `chai1`, `alphafold2`, `openfold3`), docking

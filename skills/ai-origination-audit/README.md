@@ -45,6 +45,34 @@ every audit.
 Module constants: `TIER_RUBRIC`, `EVIDENCE_GRADES`, `CLAIM_STEPS`, `AI_TERMS`,
 `CANDIDATE_COLUMNS`, `TRIAL_COLUMNS`, `EVIDENCE_COLUMNS`, `CTGOV_API`.
 
+### Saving a run
+
+- `audit_run_dir(name, root="results", topic="ai_origination_audit")` — the
+  path for one run, `<root>/<topic>/<slug>/`, with `scripts/` created beside
+  it. `name` is the candidate or company audited.
+- `audit_write_run(out_dir, name, summary, candidate=None, evidence_rows=(),
+  trial_rows=(), files=(), data_sources=(), limits=(), scripts=())` — writes
+  the three schema-locked tables (`candidate.csv`, `trials.csv`,
+  `evidence.csv`), the run README, and copies `scripts` into `scripts/`.
+  Returns the paths written. Fails before writing anything if `candidate` has
+  no `tier` set.
+- `audit_run_readme(name, summary, candidate=None, evidence_rows=(),
+  trial_rows=(), files=(), data_sources=(), limits=(), title=None)` — renders
+  the README text `audit_write_run` saves, following SKILL.md's own reporting
+  order: tier and qualification first (with the downgrade note when
+  `audit_summary()` recommends it), then the trial picture, then
+  discrepancies and the human-check queue. The Limits section always
+  includes this skill's standing caveats (methods disclosure is not
+  counterfactual evidence, coverage stops at what was actually swept, an
+  empty AI-language scan is not evidence of no AI role, a qualified tier is
+  reported as such) plus any run-specific ones passed in.
+- `audit_human_check_queue(trial_rows, evidence_rows)` — the rows either
+  table marked `needs_verification`, as two lists.
+- `audit_write_table(path, rows, headers=None)` — CSV writer for any of the
+  three schema-locked tables, used by `audit_write_run` but usable standalone.
+
+Runs land in `results/ai_origination_audit/<slug>/`.
+
 ## Grades and the downgrade rule
 
 The four evidence grades run A (peer-reviewed with methods-level detail —
